@@ -10,7 +10,7 @@ const socketEvents = require('./utils/socket');
 class Server {
     constructor() {
 
-        this.port = process.env.PORT || 3000;
+        this.port = process.env.PORT || 3001;
         this.host = process.env.HOST || `localhost`;
 
         this.app = express();
