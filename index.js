@@ -17,8 +17,8 @@ class Server {
 
 
         const sslOptions = {
-            key: fs.readFileSync('/etc/letsencrypt/live/devandesign.com/privkey.pem'),
-            cert: fs.readFileSync('/etc/letsencrypt/live/devandesign.com/fullchain.pem'), // Use fullchain.pem for the complete certificate
+            key: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/privkey.pem'),
+            cert: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/fullchain.pem'), // Use fullchain.pem for the complete certificate
         };
         this.http = https.Server(sslOptions, this.app);
 
