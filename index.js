@@ -11,7 +11,7 @@ class Server {
     constructor() {
 
         this.port = process.env.PORT || 3001;
-        this.host = process.env.HOST || `localhost`;
+        this.host = process.env.HOST || `212.38.95.162`;
 
         this.app = express();
 
@@ -32,7 +32,9 @@ class Server {
     setupRoutes() {
 
         this.app.use(express.json()); // Add this middleware at the beginning
-
+        this.app.get('/', (req, res) => {
+            return 'Chat server is running.';
+        });
         this.app.post('/test', (req, res) => {
             const { orderId,socketIds, order } = req.body; // Extract parameters from the request body
             res.send(`Socket event sent for order ${orderId}`);
