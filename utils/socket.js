@@ -4,84 +4,128 @@ const moment = require('moment');
 const path = require('path');
 const fs = require('fs');
 const helper = require('./helper');
-const orderRoomPrefix = 'order_updates_';
-class Socket {
 
-    // socket.emit('event_name', data); => Sends a message back to the client that originally emitted the event:
-    // socket.broadcast.emit('event_name', data); => Broadcast to All Clients Except the Sender Sends the message to all connected clients except the one that triggered the event:
-    // this.io.emit('event_name', data); => Emit to All Connected Clients This emits an event to all connected clients, including the sender:
-    // this.io.to('room_name').emit('event_name', data); => Sends an event to all sockets in a particular room:
-    // this.io.of('/namespace').emit('event_name', data); => If using namespaces, you can emit to all clients connected to a specific namespace:
-    // this.io.to(socket_id).emit('event_name', data); => To send a message to a specific socket by its unique ID:
-    // socket.to('room_name').emit('event_name', data); => Broadcast Within a Room (Excluding Sender) Emits an event to all clients in a specific room except the sender:
-    // socket.volatile.emit('event_name', data); => Emit with volatile (Low Priority) Emits an event but doesn’t guarantee delivery (helpful for non-essential events):
+class Socket{
 
-    constructor(socket) {
+    constructor(socket){
         this.io = socket;
     }
 
-    socketEvents() {
+    socketEvents(){
         this.io.on('connection', (socket) => {
-
-            socket.on('joinOrderRoom', (order_id) => {
-                const roomName = orderRoomPrefix+order_id;
-                socket.join(roomName);
-                console.log(`Client joined room: ${roomName}`);
-            });
-
             /**
-            * Get Chat Listing
-            */
-            socket.on('get_chat_listing', async (data) => {
-                //const orders_response = await helper.getDriversOrders(data);
-                console.log('event called')
-            });
-
-            socket.on('disconnect', async () => {
-                console.log('disconnect:'+socket.id);
-                await helper.logoutUser(socket.id);
-            });
+             * get the user's Chat list
+             */
+            socket.on('chatList', async (userId) => {
+            const result = await helper.getChatList(userId);
+        this.io.to(socket.id).emit('chatListRes', {
+            userConnected: false,
+            chatList: result.chatlist
         });
+
+        socket.broadcast.emit('chatListRes', {
+            userConnected: true,
+            userId: userId,
+            socket_id: socket.id
+        });
+    });
+        /**
+         * get the get messages
+         */
+        socket.on('getMessages', async (data) => {
+            const result = await helper.getMessages(data.fromUserId, data.toUserId);
+        if (result === null) {
+            this.io.to(socket.id).emit('getMessagesResponse', {result:[],toUserId:data.toUserId});
+        }else{
+            this.io.to(socket.id).emit('getMessagesResponse', {result:result,toUserId:data.toUserId});
+        }
+    });
+
+        /**
+         * send the messages to the user
+         */
+        socket.on('addMessage', async (response) => {
+            response.date = new moment().format("Y-MM-D");
+        response.time = new moment().format("hh:mm A");
+        this.insertMessage(response, socket).then(function (value) {
+            response.id = value;
+            socket.to(response.toSocketId).emit('addMessageResponse', response);
+        });
+
+    });
+        /**
+         * Read Message
+         */
+        socket.on('messageRead', async (data) => {
+            this.updateMessageRead(data, socket);
+        });
+
+        socket.on('typing', function (data) {
+            socket.to(data.socket_id).emit('typing', {typing:data.typing, to_socket_id:socket.id});
+        });
+
+        socket.on('upload-image', async (response) => {
+            let dir = moment().format("D-M-Y")+ "/" + moment().format('x') + "/" + response.fromUserId
+            await helper.mkdirSyncRecursive(dir);
+        let filepath = dir + "/" + response.fileName;
+        var writer = fs.createWriteStream(path.basename('uploads') + "/" + filepath, { encoding: 'base64'});
+        writer.write(response.message);
+        writer.end();
+        writer.on('finish', function () {
+            response.message = response.fileName;
+            response.filePath = filepath;
+            response.date = new moment().format("Y-MM-D");
+            response.time = new moment().format("hh:mm A");
+            this.insertMessage(response, socket);
+            socket.to(response.toSocketId).emit('addMessageResponse', response);
+            socket.emit('image-uploaded', response);
+        }.bind(this));
+    });
+
+        socket.on('disconnect', async () => {
+            const isLoggedOut = await helper.logoutUser(socket.id);
+        socket.broadcast.emit('chatListRes', {
+            userDisconnected: true,
+            socket_id: socket.id
+        });
+    });
+    });
     }
 
-    emitToMultipleSockets(io, socketIds, eventName, data){
-        if (!socketIds || socketIds.length === 0) {
-            console.log('No socket IDs provided.');
-            return;
+    async insertMessage(data, socket){
+    const sqlResult = await helper.insertMessages({
+        message_id:data.id,
+        type: data.type,
+        fileFormat: data.fileFormat,
+        filePath: data.filePath,
+        fromUserId: data.fromUserId,
+        toUserId: data.toUserId,
+        message: data.message,
+        date: data.date,
+        time: data.time,
+        ip: socket.request.connection.remoteAddress
+    });
+    let insertId = sqlResult.insertId;
+    this.io.to(socket.id).emit('messageIdUpdate', {tempMessageId:data.id,insertedId:insertId});
+    return insertId;
+}
+    async updateMessageRead(data, socket){
+    await helper.updateMessagesRead({
+        id:data.id
+    });
+    this.io.emit('readMessageTick', data);
+}
+    socketConfig(){
+        this.io.use( async (socket, next) => {
+            let userId = socket.request._query['id'];
+        let userSocketId = socket.id;
+        const response = await helper.addSocketId( userId, userSocketId);
+        if(response &&  response !== null){
+            next();
+        }else{
+            console.error(`Socket connection failed, for  user Id ${userId}.`);
         }
-        try {
-            socketIds.forEach(socketId => {
-                console.log(socketId,eventName);
-                io.to(socketId).emit(eventName, data);
-            });
-        } catch (error) {
-            console.log(error);
-        }
-
-    }
-
-    socketConfig() {
-        this.io.use(async (socket, next) => {
-            let userId = socket.request._query['user_id'];
-            let userToken = socket.request._query['token'];
-            let envoirement = socket.request._query['envoirement'];
-            let userSocketId = socket.id;
-
-            console.log('userId:'+userId+'====> socket Id:'+userSocketId+'====> Token:'+userToken+'====> envoirement:'+envoirement);
-
-            let response = true;
-            if(userToken != 'web-access'){
-                response = await helper.addSocketId(userId, userSocketId, userToken);
-                console.log('user auth',response);
-            }
-
-            if (response && response !== null) {
-                console.log(`Socket connected  user Id ${userId}.`);
-                next();
-            } else {
-                console.error(`Socket connection failed, for  user Id ${userId}.`);
-            }
-        });
+    });
         this.socketEvents();
     }
 }
