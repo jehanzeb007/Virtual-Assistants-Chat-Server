@@ -118,8 +118,9 @@ class Socket{
     socketConfig(){
         this.io.use( async (socket, next) => {
             let userId = socket.request._query['id'];
+            let token = socket.request._query['token'];
         let userSocketId = socket.id;
-        const response = await helper.addSocketId( userId, userSocketId);
+        const response = await helper.addSocketId( userId, userSocketId, token);
         if(response &&  response !== null){
             next();
         }else{

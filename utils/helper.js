@@ -24,7 +24,7 @@ class Helper{
         console.log('Laravel API URL:', this.baseUrl);
     }
 
-    async addSocketId(userId, userSocketId){
+    async addSocketId(userId, userSocketId, token){
         try {
             const response = await this.client.post('/socket/connect', {
                 user_id: userId,
