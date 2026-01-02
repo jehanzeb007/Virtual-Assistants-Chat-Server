@@ -1,4 +1,4 @@
-'user strict';
+'use strict';
 
 const path = require('path');
 const fs = require('fs');
@@ -24,108 +24,260 @@ class Helper{
         console.log('Laravel API URL:', this.baseUrl);
     }
 
-    async addSocketId(userId, userSocketId, token){
+    /**
+     * Add socket ID when user connects
+     */
+    async addSocketId(userId, userSocketId, token = null) {
         try {
+            // Use provided token or default token
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
             const response = await this.client.post('/socket/connect', {
                 user_id: userId,
                 socket_id: userSocketId,
                 user_type: 'user'
-            });
+            }, { headers });
+
+            console.log('Socket connected for user:', userId);
             return response.data ? true : null;
         } catch (error) {
-            console.log('addSocketId error:', error.response?.data || error.message);
+            console.error('addSocketId error:', {
+                userId,
+                socketId: userSocketId,
+                error: error.response?.data || error.message
+            });
             return null;
         }
     }
 
-    async logoutUser(userSocketId){
+    /**
+     * Logout user and remove socket ID
+     */
+    async logoutUser(userSocketId, token = null) {
         try {
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
             await this.client.post('/socket/disconnect', {
                 socket_id: userSocketId
-            });
+            }, { headers });
+
+            console.log('User disconnected:', userSocketId);
             return true;
         } catch (error) {
-            console.error('logoutUser error:', error.response?.data || error.message);
-            return true;
+            console.error('logoutUser error:', {
+                socketId: userSocketId,
+                error: error.response?.data || error.message
+            });
+            return true; // Return true even on error to prevent blocking
         }
     }
 
-    getChatList(userId){
+    /**
+     * Get chat list for a user
+     */
+    async getChatList(userId, token = null) {
         try {
-            return this.client.get(`/socket/chat-list/${userId}`)
-                .then((response) => {
-                    if (response.data && response.data.success) {
-                        return {
-                            chatlist: response.data.chatlist
-                        };
-                    }
-                    return null;
-                })
-                .catch((error) => {
-                    console.warn('getChatList error:', error.response?.data || error.message);
-                    return null;
-                });
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
+            const response = await this.client.get(`/socket/chat-list/${userId}`, { headers });
+
+            if (response.data) {
+                return {
+                    success: true,
+                    chatlist: response.data.chats || response.data.chatlist || []
+                };
+            }
+            return null;
         } catch (error) {
-            console.warn('getChatList error:', error);
+            console.error('getChatList error:', {
+                userId,
+                error: error.response?.data || error.message
+            });
             return null;
         }
     }
 
-    async insertMessages(params){
+    /**
+     * Insert a new message
+     */
+    async insertMessages(params, token = null) {
         try {
-            const response = await this.client.post('/socket/messages', {
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
+            const payload = {
                 message_id: params.message_id,
-                type: params.type,
-                file_format: params.fileFormat,
-                file_path: params.filePath,
+                type: params.type || 'text',
+                file_format: params.fileFormat || null,
+                file_path: params.filePath || null,
                 sender_id: params.fromUserId,
                 sender_type: params.senderType || 'user',
                 receiver_id: params.toUserId,
                 receiver_type: params.receiverType || 'user',
-                conversation_id: params.conversation_id || 1,
+                conversation_id: params.conversation_id || null,
                 message: params.message,
                 date: params.date,
                 time: params.time,
-                ip: params.ip
+                ip: params.ip || null
+            };
+
+            const response = await this.client.post('/socket/messages', payload, { headers });
+
+            console.log('Message inserted:', {
+                from: params.fromUserId,
+                to: params.toUserId,
+                messageId: response.data.insertId || response.data.id
             });
 
-            return { insertId: response.data.insertId };
+            return {
+                success: true,
+                insertId: response.data.insertId || response.data.id || response.data.message_id
+            };
         } catch (error) {
-            console.warn('insertMessages error:', error.response?.data || error.message);
+            console.error('insertMessages error:', {
+                params,
+                error: error.response?.data || error.message
+            });
             return null;
         }
     }
 
-    async updateMessagesRead(params){
+    /**
+     * Mark message as read
+     */
+    async updateMessagesRead(params, token = null) {
         try {
-            await this.client.put(`/socket/messages/${params.id}/read`);
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
+            const messageId = params.id || params.message_id;
+
+            await this.client.put(`/socket/messages/${messageId}/read`, {}, { headers });
+
+            console.log('Message marked as read:', messageId);
             return true;
         } catch (error) {
-            console.warn('updateMessagesRead error:', error.response?.data || error.message);
+            console.error('updateMessagesRead error:', {
+                messageId: params.id || params.message_id,
+                error: error.response?.data || error.message
+            });
             return null;
         }
     }
 
-    async getMessages(userId, toUserId){
+    /**
+     * Get messages between two users
+     */
+    async getMessages(userId, toUserId, token = null) {
         try {
-            const response = await this.client.get(`/socket/messages/${userId}/${toUserId}`);
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
 
-            if (response.data && response.data.success) {
-                return response.data.data;
+            const response = await this.client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
+
+            if (response.data) {
+                return {
+                    success: true,
+                    data: response.data.messages || response.data.data || []
+                };
             }
             return null;
         } catch (error) {
-            console.warn('getMessages error:', error.response?.data || error.message);
+            console.error('getMessages error:', {
+                userId,
+                toUserId,
+                error: error.response?.data || error.message
+            });
             return null;
         }
     }
 
-    async mkdirSyncRecursive(directory){
+    /**
+     * Verify user token (optional - for additional security)
+     */
+    async verifyToken(token) {
+        try {
+            const response = await this.client.get('/auth/user', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.data && response.data.user) {
+                return {
+                    valid: true,
+                    user: response.data.user
+                };
+            }
+            return { valid: false };
+        } catch (error) {
+            console.error('verifyToken error:', error.response?.data || error.message);
+            return { valid: false };
+        }
+    }
+
+    /**
+     * Create directory recursively
+     */
+    async mkdirSyncRecursive(directory) {
         var dir = directory.replace(/\/$/, '').split('/');
         for (var i = 1; i <= dir.length; i++) {
             var segment = path.basename('uploads') + "/" + dir.slice(0, i).join('/');
-            !fs.existsSync(segment) ? fs.mkdirSync(segment) : null ;
+            !fs.existsSync(segment) ? fs.mkdirSync(segment) : null;
         }
+    }
+
+    /**
+     * Handle file upload
+     */
+    async uploadFile(file, userId) {
+        try {
+            const uploadDir = path.join(__dirname, '../uploads', userId.toString());
+
+            // Create directory if it doesn't exist
+            if (!fs.existsSync(uploadDir)) {
+                await this.mkdirSyncRecursive(uploadDir);
+            }
+
+            const fileName = `${Date.now()}_${file.name}`;
+            const filePath = path.join(uploadDir, fileName);
+
+            // Save file
+            fs.writeFileSync(filePath, file.data);
+
+            return {
+                success: true,
+                path: `/uploads/${userId}/${fileName}`,
+                fileName: fileName
+            };
+        } catch (error) {
+            console.error('uploadFile error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get file extension
+     */
+    getFileExtension(filename) {
+        return path.extname(filename).toLowerCase().replace('.', '');
+    }
+
+    /**
+     * Validate file type
+     */
+    isValidFileType(filename, allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx']) {
+        const ext = this.getFileExtension(filename);
+        return allowedTypes.includes(ext);
     }
 }
 
