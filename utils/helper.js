@@ -27,7 +27,7 @@ class Helper{
     /**
      * Add socket ID when user connects
      */
-    async addSocketId(userId, userSocketId, token = null) {
+    async addSocketId(userId, userSocketId, userType = 'user', token = null) {
         try {
             // Use provided token or default token
             const headers = token ? {
@@ -37,11 +37,11 @@ class Helper{
             const response = await this.client.post('/socket/connect', {
                 user_id: userId,
                 socket_id: userSocketId,
-                user_type: 'user'
+                user_type: userType
             }, { headers });
 
-            console.log('Socket connected for user:', userId);
-            return response.data ? true : null;
+            console.log('Socket connected for user:', userId, 'Type:', userType);
+            return response.data ? response.data : null;
         } catch (error) {
             console.error('addSocketId error:', {
                 userId,
@@ -77,26 +77,32 @@ class Helper{
     }
 
     /**
-     * Get chat list for a user
+     * Get chat list for authenticated user based on their role
      */
-    async getChatList(userId, token = null) {
+    async getChatList(token) {
         try {
-            const headers = token ? {
+            if (!token) {
+                console.error('getChatList error: Token is required');
+                return null;
+            }
+
+            const headers = {
                 'Authorization': `Bearer ${token}`
-            } : {};
+            };
 
-            const response = await this.client.get(`/socket/chat-list/${userId}`, { headers });
+            const response = await this.client.get('/socket/chat-list', { headers });
 
-            if (response.data) {
+            if (response.data && response.data.success) {
+                console.log('Chat list retrieved successfully');
                 return {
                     success: true,
-                    chatlist: response.data.chats || response.data.chatlist || []
+                    role: response.data.role,
+                    chatlist: response.data.chatlist || []
                 };
             }
             return null;
         } catch (error) {
             console.error('getChatList error:', {
-                userId,
                 error: error.response?.data || error.message
             });
             return null;
@@ -118,9 +124,9 @@ class Helper{
                 file_format: params.fileFormat || null,
                 file_path: params.filePath || null,
                 sender_id: params.fromUserId,
-                sender_type: params.senderType || 'user',
+                sender_type: params.senderType || 'App\\Models\\User',
                 receiver_id: params.toUserId,
-                receiver_type: params.receiverType || 'user',
+                receiver_type: params.receiverType || 'App\\Models\\Company',
                 conversation_id: params.conversation_id || null,
                 message: params.message,
                 date: params.date,
@@ -133,12 +139,12 @@ class Helper{
             console.log('Message inserted:', {
                 from: params.fromUserId,
                 to: params.toUserId,
-                messageId: response.data.insertId || response.data.id
+                messageId: response.data.insertId || response.data.data?.id
             });
 
             return {
                 success: true,
-                insertId: response.data.insertId || response.data.id || response.data.message_id
+                insertId: response.data.insertId || response.data.data?.id
             };
         } catch (error) {
             console.error('insertMessages error:', {
@@ -184,10 +190,10 @@ class Helper{
 
             const response = await this.client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
 
-            if (response.data) {
+            if (response.data && response.data.success) {
                 return {
                     success: true,
-                    data: response.data.messages || response.data.data || []
+                    data: response.data.data || []
                 };
             }
             return null;
@@ -202,11 +208,11 @@ class Helper{
     }
 
     /**
-     * Verify user token (optional - for additional security)
+     * Verify user token and get user details
      */
     async verifyToken(token) {
         try {
-            const response = await this.client.get('/auth/user', {
+            const response = await this.client.get('/user', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
