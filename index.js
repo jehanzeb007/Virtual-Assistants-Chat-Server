@@ -9,9 +9,9 @@ const socketEvents = require('./utils/socket');
 
 class Server {
     constructor() {
+        this.env  = process.env.NODE_ENV || 'dev';
+        this.host = process.env.HOST || '127.0.0.1';
         this.port = process.env.PORT || 3001;
-        this.host = process.env.HOST || '0.0.0.0';
-        this.env  = process.env.NODE_ENV || 'local';
 
         this.app = express();
         this.server = null;
@@ -20,7 +20,7 @@ class Server {
 
     appRun() {
         // =========================
-        // LOCAL → HTTP ONLY
+        // DEV / LOCAL → HTTP ONLY
         // =========================
         if (this.env !== 'production') {
             this.server = http.createServer(this.app);
@@ -30,7 +30,7 @@ class Server {
             });
 
             this.server.listen(this.port, this.host, () => {
-                console.log(`LOCAL HTTP → http://${this.host}:${this.port}`);
+                console.log(`DEV HTTP → http://${this.host}:${this.port}`);
             });
         }
 
@@ -48,7 +48,7 @@ class Server {
             });
 
             this.server.listen(this.port, this.host, () => {
-                console.log(`PROD HTTPS → https://virtualassistants.help:${this.port}`);
+                console.log(`PROD HTTPS → https://${this.host}:${this.port}`);
             });
         }
 
