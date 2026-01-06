@@ -93,7 +93,10 @@ class Helper{
             const response = await this.client.get('/socket/chat-list', { headers });
 
             if (response.data && response.data.success) {
-                console.log('Chat list retrieved successfully');
+                console.log('Chat list retrieved successfully:', {
+                    role: response.data.role,
+                    count: response.data.chatlist?.length || 0
+                });
                 return {
                     success: true,
                     role: response.data.role,
@@ -139,6 +142,7 @@ class Helper{
             console.log('Message inserted:', {
                 from: params.fromUserId,
                 to: params.toUserId,
+                conversationId: params.conversation_id,
                 messageId: response.data.insertId || response.data.data?.id
             });
 
@@ -191,6 +195,11 @@ class Helper{
             const response = await this.client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
 
             if (response.data && response.data.success) {
+                console.log('Messages retrieved:', {
+                    userId,
+                    toUserId,
+                    count: response.data.data?.length || 0
+                });
                 return {
                     success: true,
                     data: response.data.data || []

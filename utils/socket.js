@@ -48,14 +48,24 @@ class Socket {
                     const result = await helper.getChatList(token);
 
                     if (result && result.success) {
-                        // Enrich chat list with online status
+                        // Enrich chat list with online status using socket_lookup_id
                         const enrichedChatList = result.chatlist.map(chat => {
-                            const recipientId = chat.id || chat.user_id || chat.company_id;
-                            const recipientSocketId = this.userSockets.get(String(recipientId));
+                            // Use socket_lookup_id if available, otherwise fall back to id
+                            const lookupId = chat.socket_lookup_id || chat.id || chat.user_id || chat.company_id;
+                            const recipientSocketId = this.userSockets.get(String(lookupId));
+
+                            console.log('Socket lookup for chat:', {
+                                chatName: chat.name,
+                                chatId: chat.id,
+                                lookupId: lookupId,
+                                foundSocket: recipientSocketId,
+                                isOnline: !!recipientSocketId
+                            });
+
                             return {
                                 ...chat,
                                 isOnline: !!recipientSocketId,
-                                socket_id: recipientSocketId || null
+                                socket_id: recipientSocketId
                             };
                         });
 
@@ -127,6 +137,7 @@ class Socket {
                         from: response.fromUserId,
                         to: response.toUserId,
                         toSocketId: response.toSocketId,
+                        conversationId: response.conversation_id,
                         message: response.message?.substring(0, 50)
                     });
 
@@ -264,8 +275,8 @@ class Socket {
              * Get online users - helper endpoint
              */
             socket.on('getOnlineUsers', () => {
-                const onlineUsers = Array.from(this.userSockets.entries()).map(([oderId, socketId]) => ({
-                    oderId,
+                const onlineUsers = Array.from(this.userSockets.entries()).map(([userId, socketId]) => ({
+                    userId,
                     socketId
                 }));
                 socket.emit('onlineUsersResponse', onlineUsers);
@@ -277,14 +288,14 @@ class Socket {
             socket.on('disconnect', async () => {
                 try {
                     const token = this.userTokens.get(socket.id);
-                    const oderId = this.socketUsers.get(socket.id);
+                    const userId = this.socketUsers.get(socket.id);
 
                     await helper.logoutUser(socket.id, token);
 
                     // Remove from all maps
                     this.userTokens.delete(socket.id);
-                    if (oderId) {
-                        this.userSockets.delete(oderId);
+                    if (userId) {
+                        this.userSockets.delete(userId);
                     }
                     this.socketUsers.delete(socket.id);
 
@@ -292,10 +303,10 @@ class Socket {
                     socket.broadcast.emit('chatListRes', {
                         userDisconnected: true,
                         socket_id: socket.id,
-                        userId: oderId
+                        userId: userId
                     });
 
-                    console.log(`User ${oderId} disconnected (socket: ${socket.id})`);
+                    console.log(`User ${userId} disconnected (socket: ${socket.id})`);
                 } catch (error) {
                     console.error('disconnect event error:', error);
                 }
