@@ -32,11 +32,11 @@ class Server {
             });
         }
 
-        // ===== LIVE → HTTPS ONLY =====
+        // ===== LIVE → HTTPS ONLY (dev.teamery.net SSL) =====
         if (this.env === 'production') {
             this.server = https.createServer({
-                key: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/privkey.pem'),
-                cert: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/fullchain.pem'),
+                key: fs.readFileSync('/etc/letsencrypt/live/dev.teamery.net/privkey.pem'),
+                cert: fs.readFileSync('/etc/letsencrypt/live/dev.teamery.net/fullchain.pem'),
             }, this.app);
 
             this.io = socketio(this.server, {
