@@ -11,7 +11,7 @@ class Server {
     constructor() {
         this.port = process.env.PORT || 3001;
         this.host = process.env.HOST || '0.0.0.0';
-        this.env = process.env.NODE_ENV || 'local';
+        this.env  = process.env.NODE_ENV || 'local';
 
         this.app = express();
         this.server = null;
@@ -19,7 +19,9 @@ class Server {
     }
 
     appRun() {
-        // ===== LOCAL / DEV → HTTP ONLY =====
+        // =========================
+        // LOCAL → HTTP ONLY
+        // =========================
         if (this.env !== 'production') {
             this.server = http.createServer(this.app);
 
@@ -28,15 +30,17 @@ class Server {
             });
 
             this.server.listen(this.port, this.host, () => {
-                console.log(`HTTP (LOCAL) → http://${this.host}:${this.port}`);
+                console.log(`LOCAL HTTP → http://${this.host}:${this.port}`);
             });
         }
 
-        // ===== LIVE → HTTPS ONLY (dev.teamery.net SSL) =====
+        // =========================
+        // PRODUCTION → HTTPS ONLY
+        // =========================
         if (this.env === 'production') {
             this.server = https.createServer({
-                key: fs.readFileSync('/etc/letsencrypt/live/dev.teamery.net/privkey.pem'),
-                cert: fs.readFileSync('/etc/letsencrypt/live/dev.teamery.net/fullchain.pem'),
+                key: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/privkey.pem'),
+                cert: fs.readFileSync('/etc/letsencrypt/live/virtualassistants.help/fullchain.pem'),
             }, this.app);
 
             this.io = socketio(this.server, {
@@ -44,12 +48,11 @@ class Server {
             });
 
             this.server.listen(this.port, this.host, () => {
-                console.log(`HTTPS (LIVE) → https://${this.host}:${this.port}`);
+                console.log(`PROD HTTPS → https://virtualassistants.help:${this.port}`);
             });
         }
 
         new socketEvents(this.io).socketConfig();
-
         this.app.use(express.static(__dirname + '/uploads'));
     }
 }
