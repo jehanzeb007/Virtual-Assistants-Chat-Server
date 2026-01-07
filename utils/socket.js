@@ -223,6 +223,77 @@ class Socket {
             });
 
             /**
+             * Toggle favorite
+             */
+            socket.on('toggleFavorite', async (data) => {
+                try {
+                    const token = this.userTokens.get(socket.id);
+                    const userId = this.socketUsers.get(socket.id);
+
+                    if (!token) {
+                        console.error('No token found for socket:', socket.id);
+                        this.io.to(socket.id).emit('favoriteUpdated', {
+                            success: false,
+                            message: 'Authentication required',
+                            conversationId: data.conversationId
+                        });
+                        return;
+                    }
+
+                    console.log(`Toggling favorite [${socket.environment}]:`, {
+                        userId,
+                        conversationId: data.conversationId,
+                        isFavorite: data.isFavorite
+                    });
+
+                    // Call API to update favorite status
+                    const result = await helper.toggleFavorite(
+                        data.conversationId,
+                        data.isFavorite,
+                        token,
+                        socket
+                    );
+
+                    if (result && result.success) {
+                        // Emit success to the requesting user
+                        this.io.to(socket.id).emit('favoriteUpdated', {
+                            success: true,
+                            conversationId: data.conversationId,
+                            isFavorite: data.isFavorite
+                        });
+
+                        // Broadcast to user's other connected devices (same user, different sockets)
+                        const userSockets = Array.from(this.socketUsers.entries())
+                            .filter(([socketId, uId]) => uId === userId && socketId !== socket.id)
+                            .map(([socketId]) => socketId);
+
+                        userSockets.forEach(socketId => {
+                            this.io.to(socketId).emit('favoriteUpdated', {
+                                success: true,
+                                conversationId: data.conversationId,
+                                isFavorite: data.isFavorite
+                            });
+                        });
+
+                        console.log(`Favorite toggled successfully for conversation ${data.conversationId}`);
+                    } else {
+                        this.io.to(socket.id).emit('favoriteUpdated', {
+                            success: false,
+                            message: 'Failed to toggle favorite',
+                            conversationId: data.conversationId
+                        });
+                    }
+                } catch (error) {
+                    console.error('toggleFavorite event error:', error);
+                    this.io.to(socket.id).emit('favoriteUpdated', {
+                        success: false,
+                        message: 'Failed to toggle favorite',
+                        conversationId: data.conversationId,
+                        error: error.message
+                    });
+                }
+            });
+            /**
              * Upload image
              */
             socket.on('upload-image', async (response) => {
