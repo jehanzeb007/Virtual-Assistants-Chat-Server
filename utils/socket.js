@@ -6,13 +6,13 @@ const fs = require('fs');
 const helper = require('./helper');
 
 class Socket {
-    constructor(socket) {
+    constructor(socket, apiUrls) {
         this.io = socket;
-        // Store user tokens in memory
+        this.apiUrls = apiUrls;
         this.userTokens = new Map();
-        // Store user socket mappings for direct messaging
-        this.userSockets = new Map(); // userId -> socketId
-        this.socketUsers = new Map(); // socketId -> userId
+        this.userSockets = new Map();
+        this.socketUsers = new Map();
+        this.socketEnvironments = new Map();
     }
 
     socketEvents() {
@@ -20,12 +20,19 @@ class Socket {
             const token = socket.handshake.query.token;
             const userId = socket.handshake.query.id;
             const userType = socket.handshake.query.user_type || 'user';
+            const environment = socket.environment || 'dev';
+            const apiUrl = socket.apiUrl || this.apiUrls.dev;
 
             if (token && userId) {
                 this.userTokens.set(socket.id, token);
                 this.userSockets.set(userId, socket.id);
                 this.socketUsers.set(socket.id, userId);
-                console.log(`User ${userId} (${userType}) connected with socket ${socket.id}`);
+                this.socketEnvironments.set(socket.id, environment);
+
+                console.log(`User ${userId} (${userType}) connected`);
+                console.log(`Socket ID: ${socket.id}`);
+                console.log(`Environment: ${environment.toUpperCase()}`);
+                console.log(`API URL: ${apiUrl}`);
             }
 
             /**
@@ -45,22 +52,13 @@ class Socket {
                         return;
                     }
 
-                    const result = await helper.getChatList(token);
+                    console.log(`Fetching chat list for user [${socket.environment}]`);
+                    const result = await helper.getChatList(token, socket);
 
                     if (result && result.success) {
-                        // Enrich chat list with online status using socket_lookup_id
                         const enrichedChatList = result.chatlist.map(chat => {
-                            // Use socket_lookup_id if available, otherwise fall back to id
                             const lookupId = chat.socket_lookup_id || chat.id || chat.user_id || chat.company_id;
                             const recipientSocketId = this.userSockets.get(String(lookupId));
-
-                            console.log('Socket lookup for chat:', {
-                                chatName: chat.name,
-                                chatId: chat.id,
-                                lookupId: lookupId,
-                                foundSocket: recipientSocketId,
-                                isOnline: !!recipientSocketId
-                            });
 
                             return {
                                 ...chat,
@@ -69,18 +67,18 @@ class Socket {
                             };
                         });
 
-                        // Emit to the requesting user
                         this.io.to(socket.id).emit('chatListRes', {
                             userConnected: false,
                             role: result.role,
+                            environment: socket.environment,
                             chatList: enrichedChatList
                         });
 
-                        // Broadcast to others that user is online
                         socket.broadcast.emit('chatListRes', {
                             userConnected: true,
                             userId: userId,
-                            socket_id: socket.id
+                            socket_id: socket.id,
+                            environment: socket.environment
                         });
                     } else {
                         this.io.to(socket.id).emit('chatListRes', {
@@ -105,7 +103,9 @@ class Socket {
             socket.on('getMessages', async (data) => {
                 try {
                     const token = this.userTokens.get(socket.id);
-                    const result = await helper.getMessages(data.fromUserId, data.toUserId, token);
+                    console.log(`Getting messages [${socket.environment}]: ${data.fromUserId} → ${data.toUserId}`);
+
+                    const result = await helper.getMessages(data.fromUserId, data.toUserId, token, socket);
 
                     if (result === null || !result.success) {
                         this.io.to(socket.id).emit('getMessagesResponse', {
@@ -129,16 +129,17 @@ class Socket {
             });
 
             /**
-             * Send message - FIXED: Properly route messages between users
+             * Send message
              */
             socket.on('sendMessage', async (response) => {
                 try {
-                    console.log('sendMessage received:', {
+                    const env = socket.environment || 'dev';
+
+                    console.log(`Message received [${env.toUpperCase()}]:`, {
                         from: response.fromUserId,
                         to: response.toUserId,
-                        toSocketId: response.toSocketId,
                         conversationId: response.conversation_id,
-                        message: response.message?.substring(0, 50)
+                        apiUrl: socket.apiUrl
                     });
 
                     response.date = moment().format("YYYY-MM-DD");
@@ -150,33 +151,30 @@ class Socket {
                     if (insertId) {
                         response.id = insertId;
 
-                        // FIX: Get recipient socket ID
                         let recipientSocketId = response.toSocketId;
 
-                        // If toSocketId is not provided or invalid, look up by user ID
                         if (!recipientSocketId) {
                             recipientSocketId = this.userSockets.get(String(response.toUserId));
-                            console.log(`Looked up socket for user ${response.toUserId}: ${recipientSocketId}`);
                         }
 
-                        // Send to receiver if they're online - VERSION COMPATIBLE CHECK
-                        const recipientSocket = recipientSocketId ? this.io.sockets.sockets.get?.(recipientSocketId) ?? this.io.sockets.connected?.[recipientSocketId] : null;
+                        const recipientSocket = recipientSocketId ?
+                            this.io.sockets.sockets.get?.(recipientSocketId) ??
+                            this.io.sockets.connected?.[recipientSocketId] : null;
 
                         if (recipientSocket) {
-                            console.log(`Sending message to socket: ${recipientSocketId}`);
+                            const recipientEnv = this.socketEnvironments.get(recipientSocketId);
+                            console.log(`Sending to recipient [${recipientEnv}]: ${recipientSocketId}`);
                             this.io.to(recipientSocketId).emit('addMessageResponse', response);
                         } else {
-                            console.log(`Recipient ${response.toUserId} is offline, message stored in DB`);
+                            console.log(`Recipient ${response.toUserId} is offline`);
                         }
 
-                        // Confirm to sender
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
                             id: insertId,
                             success: true
                         });
                     } else {
-                        // Message insertion failed
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
                             success: false,
@@ -206,12 +204,11 @@ class Socket {
             });
 
             /**
-             * Typing indicator - FIXED: Proper socket targeting
+             * Typing indicator
              */
             socket.on('typing', (data) => {
                 let targetSocketId = data.socket_id;
 
-                // If socket_id is not provided, look up by user ID
                 if (!targetSocketId && data.toUserId) {
                     targetSocketId = this.userSockets.get(String(data.toUserId));
                 }
@@ -255,7 +252,9 @@ class Socket {
                             recipientSocketId = this.userSockets.get(String(response.toUserId));
                         }
 
-                        const recipientSocket = recipientSocketId ? this.io.sockets.sockets.get?.(recipientSocketId) ?? this.io.sockets.connected?.[recipientSocketId] : null;
+                        const recipientSocket = recipientSocketId ?
+                            this.io.sockets.sockets.get?.(recipientSocketId) ??
+                            this.io.sockets.connected?.[recipientSocketId] : null;
 
                         if (recipientSocket) {
                             this.io.to(recipientSocketId).emit('addMessageResponse', response);
@@ -272,12 +271,13 @@ class Socket {
             });
 
             /**
-             * Get online users - helper endpoint
+             * Get online users
              */
             socket.on('getOnlineUsers', () => {
                 const onlineUsers = Array.from(this.userSockets.entries()).map(([userId, socketId]) => ({
                     userId,
-                    socketId
+                    socketId,
+                    environment: this.socketEnvironments.get(socketId)
                 }));
                 socket.emit('onlineUsersResponse', onlineUsers);
             });
@@ -289,24 +289,25 @@ class Socket {
                 try {
                     const token = this.userTokens.get(socket.id);
                     const userId = this.socketUsers.get(socket.id);
+                    const environment = this.socketEnvironments.get(socket.id);
 
-                    await helper.logoutUser(socket.id, token);
+                    await helper.logoutUser(socket.id, token, socket);
 
-                    // Remove from all maps
                     this.userTokens.delete(socket.id);
                     if (userId) {
                         this.userSockets.delete(userId);
                     }
                     this.socketUsers.delete(socket.id);
+                    this.socketEnvironments.delete(socket.id);
 
-                    // Broadcast disconnect to all clients
                     socket.broadcast.emit('chatListRes', {
                         userDisconnected: true,
                         socket_id: socket.id,
-                        userId: userId
+                        userId: userId,
+                        environment: environment
                     });
 
-                    console.log(`User ${userId} disconnected (socket: ${socket.id})`);
+                    console.log(`User ${userId} disconnected [${environment}] (socket: ${socket.id})`);
                 } catch (error) {
                     console.error('disconnect event error:', error);
                 }
@@ -316,6 +317,8 @@ class Socket {
 
     async insertMessage(data, socket, token) {
         try {
+            console.log(`Inserting message [${socket.environment}] via ${socket.apiUrl}`);
+
             const sqlResult = await helper.insertMessages({
                 message_id: data.id,
                 type: data.type || 'text',
@@ -330,7 +333,7 @@ class Socket {
                 date: data.date,
                 time: data.time,
                 ip: socket.request.connection.remoteAddress
-            }, token);
+            }, token, socket);
 
             if (sqlResult && sqlResult.insertId) {
                 let insertId = sqlResult.insertId;
@@ -338,6 +341,7 @@ class Socket {
                     tempMessageId: data.id,
                     insertedId: insertId
                 });
+                console.log(`Message saved with ID: ${insertId}`);
                 return insertId;
             }
             return null;
@@ -351,9 +355,8 @@ class Socket {
         try {
             await helper.updateMessagesRead({
                 id: data.id
-            }, token);
+            }, token, socket);
 
-            // Emit to both sender and receiver
             this.io.emit('readMessageTick', data);
         } catch (error) {
             console.error('updateMessageRead error:', error);
@@ -366,22 +369,27 @@ class Socket {
                 let userId = socket.handshake.query['id'];
                 let token = socket.handshake.query['token'];
                 let userType = socket.handshake.query['user_type'] || 'user';
+                let environment = socket.environment || 'dev';
 
-                console.log('Socket connection attempt:', { userId, userType });
+                console.log(`Socket authentication [${environment.toUpperCase()}]:`, {
+                    userId,
+                    userType,
+                    apiUrl: socket.apiUrl
+                });
 
                 if (!userId || !token) {
-                    console.error('Missing userId or token in socket connection');
+                    console.error('Missing userId or token');
                     return next(new Error('Authentication error'));
                 }
 
                 let userSocketId = socket.id;
-                const response = await helper.addSocketId(userId, userSocketId, userType, token);
+                const response = await helper.addSocketId(userId, userSocketId, userType, token, socket);
 
                 if (response && response !== null) {
-                    console.log(`Socket authenticated for user ${userId} (${userType})`);
+                    console.log(`Socket authenticated [${environment.toUpperCase()}]: ${userId} (${userType})`);
                     next();
                 } else {
-                    console.error(`Socket connection failed for user ${userId}`);
+                    console.error(`Socket authentication failed [${environment.toUpperCase()}]: ${userId}`);
                     next(new Error('Authentication failed'));
                 }
             } catch (error) {

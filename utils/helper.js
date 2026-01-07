@@ -1,51 +1,82 @@
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
 const axios = require('axios');
 
 // Load environment variables
 require('dotenv').config();
 
-class Helper{
+class Helper {
+    constructor() {
+        // API URLs for different environments
+        this.apiUrls = {
+            dev: process.env.DEV_API_URL || 'https://dev.virtualassistants.help/api',
+            stage: process.env.STAGE_API_URL || 'https://stage.virtualassistants.help/api',
+            production: process.env.PRODUCTION_API_URL || 'https://virtualassistants.help/api'
+        };
 
-    constructor(app){
-        this.baseUrl = process.env.LARAVEL_API_URL;
-        this.client = axios.create({
-            baseURL: this.baseUrl,
+        console.log('Helper initialized with API URLs:', this.apiUrls);
+    }
+
+    /**
+     * Get the appropriate API URL based on socket environment
+     */
+    getApiUrl(socket) {
+        if (socket && socket.apiUrl) {
+            return socket.apiUrl;
+        }
+
+        if (socket && socket.environment) {
+            return this.apiUrls[socket.environment] || this.apiUrls.dev;
+        }
+
+        return this.apiUrls.dev;
+    }
+
+    /**
+     * Get axios client based on socket's API URL
+     */
+    getClient(socket) {
+        const apiUrl = this.getApiUrl(socket);
+
+        return axios.create({
+            baseURL: apiUrl,
             timeout: 30000,
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             }
         });
-
-        // Log the API URL being used
-        console.log('Laravel API URL:', this.baseUrl);
     }
 
     /**
      * Add socket ID when user connects
      */
-    async addSocketId(userId, userSocketId, userType = 'user', token = null) {
+    async addSocketId(userId, userSocketId, userType = 'user', token = null, socket = null) {
         try {
-            // Use provided token or default token
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = token ? {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            const response = await this.client.post('/socket/connect', {
+            console.log(`Connecting user ${userId} to ${apiUrl}/socket/connect`);
+
+            const response = await client.post('/socket/connect', {
                 user_id: userId,
                 socket_id: userSocketId,
-                user_type: userType
+                user_type: userType,
+                environment: socket?.environment || 'dev'
             }, { headers });
 
-            console.log('Socket connected for user:', userId, 'Type:', userType);
+            console.log(`Socket connected for user ${userId} (${userType}) [${socket?.environment || 'dev'}]`);
             return response.data ? response.data : null;
         } catch (error) {
             console.error('addSocketId error:', {
                 userId,
                 socketId: userSocketId,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 error: error.response?.data || error.message
             });
             return null;
@@ -55,45 +86,58 @@ class Helper{
     /**
      * Logout user and remove socket ID
      */
-    async logoutUser(userSocketId, token = null) {
+    async logoutUser(userSocketId, token = null, socket = null) {
         try {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = token ? {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            await this.client.post('/socket/disconnect', {
-                socket_id: userSocketId
+            console.log(`Disconnecting socket ${userSocketId} from ${apiUrl}/socket/disconnect`);
+
+            await client.post('/socket/disconnect', {
+                socket_id: userSocketId,
+                environment: socket?.environment || 'dev'
             }, { headers });
 
-            console.log('User disconnected:', userSocketId);
+            console.log(`User disconnected [${socket?.environment || 'dev'}]:`, userSocketId);
             return true;
         } catch (error) {
             console.error('logoutUser error:', {
                 socketId: userSocketId,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 error: error.response?.data || error.message
             });
-            return true; // Return true even on error to prevent blocking
+            return true;
         }
     }
 
     /**
      * Get chat list for authenticated user based on their role
      */
-    async getChatList(token) {
+    async getChatList(token, socket = null) {
         try {
             if (!token) {
                 console.error('getChatList error: Token is required');
                 return null;
             }
 
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = {
                 'Authorization': `Bearer ${token}`
             };
 
-            const response = await this.client.get('/socket/chat-list', { headers });
+            console.log(`Fetching chat list from ${apiUrl}/socket/chat-list`);
+
+            const response = await client.get('/socket/chat-list', { headers });
 
             if (response.data && response.data.success) {
-                console.log('Chat list retrieved successfully:', {
+                console.log(`Chat list retrieved [${socket?.environment || 'dev'}]:`, {
                     role: response.data.role,
                     count: response.data.chatlist?.length || 0
                 });
@@ -106,6 +150,8 @@ class Helper{
             return null;
         } catch (error) {
             console.error('getChatList error:', {
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 error: error.response?.data || error.message
             });
             return null;
@@ -115,8 +161,11 @@ class Helper{
     /**
      * Insert a new message
      */
-    async insertMessages(params, token = null) {
+    async insertMessages(params, token = null, socket = null) {
         try {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = token ? {
                 'Authorization': `Bearer ${token}`
             } : {};
@@ -134,24 +183,31 @@ class Helper{
                 message: params.message,
                 date: params.date,
                 time: params.time,
-                ip: params.ip || null
+                ip: params.ip || null,
+                environment: socket?.environment || 'dev'
             };
 
-            const response = await this.client.post('/socket/messages', payload, { headers });
+            console.log(`Inserting message to ${apiUrl}/socket/messages`);
 
-            console.log('Message inserted:', {
+            const response = await client.post('/socket/messages', payload, { headers });
+
+            const insertId = response.data.insertId || response.data.data?.id;
+
+            console.log(`Message inserted [${socket?.environment || 'dev'}]:`, {
                 from: params.fromUserId,
                 to: params.toUserId,
                 conversationId: params.conversation_id,
-                messageId: response.data.insertId || response.data.data?.id
+                messageId: insertId
             });
 
             return {
                 success: true,
-                insertId: response.data.insertId || response.data.data?.id
+                insertId: insertId
             };
         } catch (error) {
             console.error('insertMessages error:', {
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 params,
                 error: error.response?.data || error.message
             });
@@ -162,20 +218,29 @@ class Helper{
     /**
      * Mark message as read
      */
-    async updateMessagesRead(params, token = null) {
+    async updateMessagesRead(params, token = null, socket = null) {
         try {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = token ? {
                 'Authorization': `Bearer ${token}`
             } : {};
 
             const messageId = params.id || params.message_id;
 
-            await this.client.put(`/socket/messages/${messageId}/read`, {}, { headers });
+            console.log(`Marking message as read in ${apiUrl}/socket/messages/${messageId}/read`);
 
-            console.log('Message marked as read:', messageId);
+            await client.put(`/socket/messages/${messageId}/read`, {
+                environment: socket?.environment || 'dev'
+            }, { headers });
+
+            console.log(`Message marked as read [${socket?.environment || 'dev'}]:`, messageId);
             return true;
         } catch (error) {
             console.error('updateMessagesRead error:', {
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 messageId: params.id || params.message_id,
                 error: error.response?.data || error.message
             });
@@ -186,16 +251,21 @@ class Helper{
     /**
      * Get messages between two users
      */
-    async getMessages(userId, toUserId, token = null) {
+    async getMessages(userId, toUserId, token = null, socket = null) {
         try {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
             const headers = token ? {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            const response = await this.client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
+            console.log(`Fetching messages from ${apiUrl}/socket/messages/${userId}/${toUserId}`);
+
+            const response = await client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
 
             if (response.data && response.data.success) {
-                console.log('Messages retrieved:', {
+                console.log(`Messages retrieved [${socket?.environment || 'dev'}]:`, {
                     userId,
                     toUserId,
                     count: response.data.data?.length || 0
@@ -208,6 +278,8 @@ class Helper{
             return null;
         } catch (error) {
             console.error('getMessages error:', {
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
                 userId,
                 toUserId,
                 error: error.response?.data || error.message
@@ -219,9 +291,14 @@ class Helper{
     /**
      * Verify user token and get user details
      */
-    async verifyToken(token) {
+    async verifyToken(token, socket = null) {
         try {
-            const response = await this.client.get('/user', {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            console.log(`Verifying token at ${apiUrl}/user`);
+
+            const response = await client.get('/user', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -235,7 +312,11 @@ class Helper{
             }
             return { valid: false };
         } catch (error) {
-            console.error('verifyToken error:', error.response?.data || error.message);
+            console.error('verifyToken error:', {
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
             return { valid: false };
         }
     }
@@ -244,6 +325,9 @@ class Helper{
      * Create directory recursively
      */
     async mkdirSyncRecursive(directory) {
+        const fs = require('fs');
+        const path = require('path');
+
         var dir = directory.replace(/\/$/, '').split('/');
         for (var i = 1; i <= dir.length; i++) {
             var segment = path.basename('uploads') + "/" + dir.slice(0, i).join('/');
@@ -255,10 +339,12 @@ class Helper{
      * Handle file upload
      */
     async uploadFile(file, userId) {
+        const fs = require('fs');
+        const path = require('path');
+
         try {
             const uploadDir = path.join(__dirname, '../uploads', userId.toString());
 
-            // Create directory if it doesn't exist
             if (!fs.existsSync(uploadDir)) {
                 await this.mkdirSyncRecursive(uploadDir);
             }
@@ -266,7 +352,6 @@ class Helper{
             const fileName = `${Date.now()}_${file.name}`;
             const filePath = path.join(uploadDir, fileName);
 
-            // Save file
             fs.writeFileSync(filePath, file.data);
 
             return {
@@ -284,6 +369,7 @@ class Helper{
      * Get file extension
      */
     getFileExtension(filename) {
+        const path = require('path');
         return path.extname(filename).toLowerCase().replace('.', '');
     }
 
