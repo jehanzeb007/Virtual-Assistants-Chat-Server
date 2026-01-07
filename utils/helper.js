@@ -336,6 +336,55 @@ class Helper {
     }
 
     /**
+     * Toggle favorite status for a conversation
+     */
+    async toggleFavorite(conversationId, isFavorite, token = null, socket = null) {
+        try {
+            if (!token) {
+                console.error('toggleFavorite error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            console.log(`Toggling favorite at ${apiUrl}/socket/conversations/${conversationId}/toggle-favorite`);
+
+            const response = await client.post(
+                `/socket/conversations/${conversationId}/toggle-favorite`,
+                {
+                    is_favorite: isFavorite,
+                    environment: socket?.environment || 'dev'
+                },
+                { headers }
+            );
+
+            if (response.data && response.data.success) {
+                console.log(`Favorite toggled [${socket?.environment || 'dev'}]:`, {
+                    conversationId,
+                    isFavorite: response.data.is_favorite
+                });
+                return {
+                    success: true,
+                    is_favorite: response.data.is_favorite
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('toggleFavorite error:', {
+                conversationId,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
+    /**
      * Handle file upload
      */
     async uploadFile(file, userId) {
