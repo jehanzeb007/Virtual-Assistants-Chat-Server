@@ -20,6 +20,7 @@ class Helper {
         this.ALLOWED_IMAGE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
         this.ALLOWED_DOCUMENT_TYPES = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
         this.MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB in bytes
+        this.DEFAULT_MESSAGE_LIMIT = 20;
 
         console.log('Helper initialized with API URLs:', this.apiUrls);
     }
@@ -372,9 +373,9 @@ class Helper {
     }
 
     /**
-     * Get messages between two users
+     * Get messages between two users with pagination support
      */
-    async getMessages(userId, toUserId, token = null, socket = null) {
+    async getMessages(userId, toUserId, token = null, socket = null, limit = null, offset = null) {
         try {
             const client = this.getClient(socket);
             const apiUrl = this.getApiUrl(socket);
@@ -383,19 +384,36 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            console.log(`Fetching messages from ${apiUrl}/socket/messages/${userId}/${toUserId}`);
+            // Build query parameters for pagination
+            const params = {};
+            if (limit !== null && limit !== undefined) {
+                params.limit = limit;
+            }
+            if (offset !== null && offset !== undefined) {
+                params.offset = offset;
+            }
 
-            const response = await client.get(`/socket/messages/${userId}/${toUserId}`, { headers });
+            console.log(`Fetching messages from ${apiUrl}/socket/messages/${userId}/${toUserId}`, {
+                limit: params.limit || 'default',
+                offset: params.offset || 0
+            });
+
+            const response = await client.get(`/socket/messages/${userId}/${toUserId}`, {
+                headers,
+                params
+            });
 
             if (response.data && response.data.success) {
                 console.log(`Messages retrieved [${socket?.environment || 'dev'}]:`, {
                     userId,
                     toUserId,
-                    count: response.data.data?.length || 0
+                    count: response.data.data?.length || 0,
+                    pagination: response.data.pagination
                 });
                 return {
                     success: true,
-                    data: response.data.data || []
+                    data: response.data.data || [],
+                    pagination: response.data.pagination
                 };
             }
             return null;
@@ -405,6 +423,8 @@ class Helper {
                 apiUrl: this.getApiUrl(socket),
                 userId,
                 toUserId,
+                limit,
+                offset,
                 error: error.response?.data || error.message
             });
             return null;
@@ -546,6 +566,52 @@ class Helper {
             isDocument: this.ALLOWED_DOCUMENT_TYPES.includes(extension),
             isAllowed: [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES].includes(extension)
         };
+    }
+
+    /**
+     * Get conversation media (images and documents)
+     */
+    async getConversationMedia(conversationId, token = null, socket = null) {
+        try {
+            if (!token) {
+                console.error('getConversationMedia error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            console.log(`Fetching conversation media from ${apiUrl}/socket/conversations/${conversationId}/media`);
+
+            const response = await client.get(`/socket/conversations/${conversationId}/media`, { headers });
+
+            if (response.data && response.data.success) {
+                console.log(`Conversation media retrieved [${socket?.environment || 'dev'}]:`, {
+                    conversationId,
+                    images: response.data.media.images?.length || 0,
+                    documents: response.data.media.documents?.length || 0,
+                    total: response.data.media.total || 0
+                });
+                return {
+                    success: true,
+                    conversationId: response.data.conversationId,
+                    media: response.data.media
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('getConversationMedia error:', {
+                conversationId,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
     }
 }
 
