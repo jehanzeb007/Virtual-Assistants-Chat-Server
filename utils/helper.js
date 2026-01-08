@@ -1,6 +1,8 @@
 'use strict';
 
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // Load environment variables
 require('dotenv').config();
@@ -13,6 +15,11 @@ class Helper {
             stage: process.env.STAGE_API_URL || 'https://stage.virtualassistants.help/api',
             production: process.env.PRODUCTION_API_URL || 'https://virtualassistants.help/api'
         };
+
+        // File upload configuration
+        this.ALLOWED_IMAGE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        this.ALLOWED_DOCUMENT_TYPES = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
+        this.MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB in bytes
 
         console.log('Helper initialized with API URLs:', this.apiUrls);
     }
@@ -46,6 +53,42 @@ class Helper {
                 'Accept': 'application/json'
             }
         });
+    }
+
+    /**
+     * Validate file
+     */
+    validateFile(file, filename) {
+        const errors = [];
+
+        // Check file size
+        if (file.length > this.MAX_FILE_SIZE) {
+            errors.push(`File "${filename}" exceeds 2MB limit`);
+        }
+
+        // Check file format
+        const extension = this.getFileExtension(filename).toLowerCase();
+        const allowedTypes = [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES];
+
+        if (!allowedTypes.includes(extension)) {
+            errors.push(`File "${filename}" has unsupported format (.${extension})`);
+        }
+
+        return errors;
+    }
+
+    /**
+     * Get file extension
+     */
+    getFileExtension(filename) {
+        return filename.split('.').pop().toLowerCase();
+    }
+
+    /**
+     * Check if file is an image
+     */
+    isImageFormat(extension) {
+        return this.ALLOWED_IMAGE_TYPES.includes(extension.toLowerCase());
     }
 
     /**
@@ -159,7 +202,7 @@ class Helper {
     }
 
     /**
-     * Insert a new message
+     * Insert a new message (with file attachments support)
      */
     async insertMessages(params, token = null, socket = null) {
         try {
@@ -173,8 +216,6 @@ class Helper {
             const payload = {
                 message_id: params.message_id,
                 type: params.type || 'text',
-                file_format: params.fileFormat || null,
-                file_path: params.filePath || null,
                 sender_id: params.fromUserId,
                 sender_type: params.senderType || 'App\\Models\\User',
                 receiver_id: params.toUserId,
@@ -184,10 +225,14 @@ class Helper {
                 date: params.date,
                 time: params.time,
                 ip: params.ip || null,
+                attachments: params.attachments || [],
                 environment: socket?.environment || 'dev'
             };
 
-            console.log(`Inserting message to ${apiUrl}/socket/messages`);
+            console.log(`Inserting message to ${apiUrl}/socket/messages`, {
+                hasAttachments: (params.attachments || []).length > 0,
+                attachmentCount: (params.attachments || []).length
+            });
 
             const response = await client.post('/socket/messages', payload, { headers });
 
@@ -197,7 +242,8 @@ class Helper {
                 from: params.fromUserId,
                 to: params.toUserId,
                 conversationId: params.conversation_id,
-                messageId: insertId
+                messageId: insertId,
+                hasAttachments: (params.attachments || []).length > 0
             });
 
             return {
@@ -208,10 +254,87 @@ class Helper {
             console.error('insertMessages error:', {
                 environment: socket?.environment,
                 apiUrl: this.getApiUrl(socket),
-                params,
+                params: {
+                    ...params,
+                    attachments: params.attachments ? `${params.attachments.length} files` : 'none'
+                },
                 error: error.response?.data || error.message
             });
             return null;
+        }
+    }
+
+    /**
+     * Upload file (legacy method for socket.io upload-image event)
+     */
+    async uploadFileViaSocket(fileData, fileName, conversationId, messageId, token = null, socket = null) {
+        try {
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
+            // Validate file
+            const errors = this.validateFile(fileData, fileName);
+            if (errors.length > 0) {
+                return {
+                    success: false,
+                    errors: errors
+                };
+            }
+
+            // Create form data
+            const FormData = require('form-data');
+            const form = new FormData();
+
+            form.append('file', fileData, fileName);
+            form.append('conversation_id', conversationId);
+            form.append('message_id', messageId);
+
+            console.log(`Uploading file to ${apiUrl}/socket/upload-file`);
+
+            const response = await client.post('/socket/upload-file', form, {
+                headers: {
+                    ...headers,
+                    ...form.getHeaders()
+                }
+            });
+
+            if (response.data && response.data.success) {
+                console.log(`File uploaded successfully [${socket?.environment || 'dev'}]:`, {
+                    filename: fileName,
+                    path: response.data.path
+                });
+
+                return {
+                    success: true,
+                    path: response.data.path,
+                    filename: response.data.filename,
+                    original_name: response.data.original_name,
+                    size: response.data.size,
+                    type: response.data.type,
+                    extension: response.data.extension
+                };
+            }
+
+            return {
+                success: false,
+                message: 'File upload failed'
+            };
+        } catch (error) {
+            console.error('uploadFileViaSocket error:', {
+                fileName,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return {
+                success: false,
+                message: error.response?.data?.message || 'File upload failed',
+                error: error.message
+            };
         }
     }
 
@@ -325,10 +448,7 @@ class Helper {
      * Create directory recursively
      */
     async mkdirSyncRecursive(directory) {
-        const fs = require('fs');
-        const path = require('path');
-
-        var dir = directory.replace(/\/$/, '').split('/');
+        const dir = directory.replace(/\/$/, '').split('/');
         for (var i = 1; i <= dir.length; i++) {
             var segment = path.basename('uploads') + "/" + dir.slice(0, i).join('/');
             !fs.existsSync(segment) ? fs.mkdirSync(segment) : null;
@@ -384,13 +504,11 @@ class Helper {
             return null;
         }
     }
-    /**
-     * Handle file upload
-     */
-    async uploadFile(file, userId) {
-        const fs = require('fs');
-        const path = require('path');
 
+    /**
+     * Save uploaded file locally
+     */
+    async saveFileLocally(fileData, filename, userId) {
         try {
             const uploadDir = path.join(__dirname, '../uploads', userId.toString());
 
@@ -398,36 +516,36 @@ class Helper {
                 await this.mkdirSyncRecursive(uploadDir);
             }
 
-            const fileName = `${Date.now()}_${file.name}`;
-            const filePath = path.join(uploadDir, fileName);
+            const uniqueFilename = `${Date.now()}_${filename}`;
+            const filePath = path.join(uploadDir, uniqueFilename);
 
-            fs.writeFileSync(filePath, file.data);
+            fs.writeFileSync(filePath, fileData);
 
             return {
                 success: true,
-                path: `/uploads/${userId}/${fileName}`,
-                fileName: fileName
+                path: `/uploads/${userId}/${uniqueFilename}`,
+                filename: uniqueFilename
             };
         } catch (error) {
-            console.error('uploadFile error:', error);
-            return null;
+            console.error('saveFileLocally error:', error);
+            return {
+                success: false,
+                error: error.message
+            };
         }
     }
 
     /**
-     * Get file extension
+     * Get file info
      */
-    getFileExtension(filename) {
-        const path = require('path');
-        return path.extname(filename).toLowerCase().replace('.', '');
-    }
-
-    /**
-     * Validate file type
-     */
-    isValidFileType(filename, allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx']) {
-        const ext = this.getFileExtension(filename);
-        return allowedTypes.includes(ext);
+    getFileInfo(filename) {
+        const extension = this.getFileExtension(filename);
+        return {
+            extension: extension,
+            isImage: this.isImageFormat(extension),
+            isDocument: this.ALLOWED_DOCUMENT_TYPES.includes(extension),
+            isAllowed: [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES].includes(extension)
+        };
     }
 }
 
