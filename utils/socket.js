@@ -98,24 +98,51 @@ class Socket {
             });
 
             /**
-             * Get messages between users
+             * Get messages between users with pagination support
              */
             socket.on('getMessages', async (data) => {
                 try {
                     const token = this.userTokens.get(socket.id);
-                    console.log(`Getting messages [${socket.environment}]: ${data.fromUserId} → ${data.toUserId}`);
 
-                    const result = await helper.getMessages(data.fromUserId, data.toUserId, token, socket);
+                    // Extract pagination parameters
+                    const limit = data.limit || null;
+                    const offset = data.offset || null;
+
+                    console.log(`Getting messages [${socket.environment}]: ${data.fromUserId} → ${data.toUserId}`, {
+                        limit: limit || 'default (20)',
+                        offset: offset || 0
+                    });
+
+                    const result = await helper.getMessages(
+                        data.fromUserId,
+                        data.toUserId,
+                        token,
+                        socket,
+                        limit,
+                        offset
+                    );
 
                     if (result === null || !result.success) {
                         this.io.to(socket.id).emit('getMessagesResponse', {
                             result: [],
-                            toUserId: data.toUserId
+                            toUserId: data.toUserId,
+                            pagination: {
+                                limit: limit || 20,
+                                offset: offset || 0,
+                                hasMore: false,
+                                total: 0
+                            }
                         });
                     } else {
                         this.io.to(socket.id).emit('getMessagesResponse', {
                             result: result.data,
-                            toUserId: data.toUserId
+                            toUserId: data.toUserId,
+                            pagination: result.pagination
+                        });
+
+                        console.log(`Messages sent to client:`, {
+                            count: result.data.length,
+                            pagination: result.pagination
                         });
                     }
                 } catch (error) {
@@ -123,7 +150,13 @@ class Socket {
                     this.io.to(socket.id).emit('getMessagesResponse', {
                         result: [],
                         toUserId: data.toUserId,
-                        error: true
+                        error: true,
+                        pagination: {
+                            limit: data.limit || 20,
+                            offset: data.offset || 0,
+                            hasMore: false,
+                            total: 0
+                        }
                     });
                 }
             });
