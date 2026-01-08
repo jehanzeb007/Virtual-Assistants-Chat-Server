@@ -129,7 +129,7 @@ class Socket {
             });
 
             /**
-             * Send message
+             * Send message (with file attachments support)
              */
             socket.on('sendMessage', async (response) => {
                 try {
@@ -139,6 +139,8 @@ class Socket {
                         from: response.fromUserId,
                         to: response.toUserId,
                         conversationId: response.conversation_id,
+                        hasAttachments: !!(response.attachments && response.attachments.length > 0),
+                        attachmentCount: response.attachments?.length || 0,
                         apiUrl: socket.apiUrl
                     });
 
@@ -146,6 +148,8 @@ class Socket {
                     response.time = moment().format("hh:mm A");
 
                     const token = this.userTokens.get(socket.id);
+
+                    // Insert message with attachments
                     const insertId = await this.insertMessage(response, socket, token);
 
                     if (insertId) {
@@ -246,7 +250,6 @@ class Socket {
                         isFavorite: data.isFavorite
                     });
 
-                    // Call API to update favorite status
                     const result = await helper.toggleFavorite(
                         data.conversationId,
                         data.isFavorite,
@@ -255,14 +258,12 @@ class Socket {
                     );
 
                     if (result && result.success) {
-                        // Emit success to the requesting user
                         this.io.to(socket.id).emit('favoriteUpdated', {
                             success: true,
                             conversationId: data.conversationId,
                             isFavorite: data.isFavorite
                         });
 
-                        // Broadcast to user's other connected devices (same user, different sockets)
                         const userSockets = Array.from(this.socketUsers.entries())
                             .filter(([socketId, uId]) => uId === userId && socketId !== socket.id)
                             .map(([socketId]) => socketId);
@@ -293,8 +294,9 @@ class Socket {
                     });
                 }
             });
+
             /**
-             * Upload image
+             * Upload image (legacy support)
              */
             socket.on('upload-image', async (response) => {
                 try {
@@ -388,13 +390,14 @@ class Socket {
 
     async insertMessage(data, socket, token) {
         try {
-            console.log(`Inserting message [${socket.environment}] via ${socket.apiUrl}`);
+            console.log(`Inserting message [${socket.environment}] via ${socket.apiUrl}`, {
+                hasAttachments: !!(data.attachments && data.attachments.length > 0),
+                attachmentCount: data.attachments?.length || 0
+            });
 
             const sqlResult = await helper.insertMessages({
                 message_id: data.id,
                 type: data.type || 'text',
-                fileFormat: data.fileFormat,
-                filePath: data.filePath,
                 fromUserId: data.fromUserId,
                 toUserId: data.toUserId,
                 conversation_id: data.conversation_id,
@@ -403,7 +406,8 @@ class Socket {
                 message: data.message,
                 date: data.date,
                 time: data.time,
-                ip: socket.request.connection.remoteAddress
+                ip: socket.request.connection.remoteAddress,
+                attachments: data.attachments || []
             }, token, socket);
 
             if (sqlResult && sqlResult.insertId) {
@@ -412,7 +416,9 @@ class Socket {
                     tempMessageId: data.id,
                     insertedId: insertId
                 });
-                console.log(`Message saved with ID: ${insertId}`);
+                console.log(`Message saved with ID: ${insertId}`, {
+                    hasAttachments: !!(data.attachments && data.attachments.length > 0)
+                });
                 return insertId;
             }
             return null;
