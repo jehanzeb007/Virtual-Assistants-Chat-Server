@@ -329,6 +329,66 @@ class Socket {
             });
 
             /**
+             * Get conversation media (images and documents)
+             */
+            socket.on('getConversationMedia', async (data) => {
+                try {
+                    const token = this.userTokens.get(socket.id);
+
+                    if (!token) {
+                        console.error('No token found for socket:', socket.id);
+                        this.io.to(socket.id).emit('conversationMediaResponse', {
+                            success: false,
+                            message: 'Authentication required',
+                            conversationId: data.conversationId,
+                            media: { images: [], documents: [], total: 0 }
+                        });
+                        return;
+                    }
+
+                    console.log(`Fetching conversation media [${socket.environment}]:`, {
+                        conversationId: data.conversationId
+                    });
+
+                    const result = await helper.getConversationMedia(
+                        data.conversationId,
+                        token,
+                        socket
+                    );
+
+                    if (result && result.success) {
+                        this.io.to(socket.id).emit('conversationMediaResponse', {
+                            success: true,
+                            conversationId: result.conversationId,
+                            media: result.media
+                        });
+
+                        console.log(`Conversation media sent [${socket.environment}]:`, {
+                            conversationId: result.conversationId,
+                            imagesCount: result.media.images?.length || 0,
+                            documentsCount: result.media.documents?.length || 0
+                        });
+                    } else {
+                        this.io.to(socket.id).emit('conversationMediaResponse', {
+                            success: false,
+                            message: 'Failed to fetch conversation media',
+                            conversationId: data.conversationId,
+                            media: { images: [], documents: [], total: 0 }
+                        });
+                    }
+                } catch (error) {
+                    console.error('getConversationMedia event error:', error);
+                    this.io.to(socket.id).emit('conversationMediaResponse', {
+                        success: false,
+                        message: 'Failed to fetch conversation media',
+                        conversationId: data.conversationId,
+                        media: { images: [], documents: [], total: 0 },
+                        error: error.message
+                    });
+                }
+            });
+
+            /**
              * Upload image (legacy support)
              */
             socket.on('upload-image', async (response) => {

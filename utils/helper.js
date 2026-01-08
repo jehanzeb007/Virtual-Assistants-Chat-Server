@@ -567,6 +567,52 @@ class Helper {
             isAllowed: [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES].includes(extension)
         };
     }
+
+    /**
+     * Get conversation media (images and documents)
+     */
+    async getConversationMedia(conversationId, token = null, socket = null) {
+        try {
+            if (!token) {
+                console.error('getConversationMedia error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            console.log(`Fetching conversation media from ${apiUrl}/socket/conversations/${conversationId}/media`);
+
+            const response = await client.get(`/socket/conversations/${conversationId}/media`, { headers });
+
+            if (response.data && response.data.success) {
+                console.log(`Conversation media retrieved [${socket?.environment || 'dev'}]:`, {
+                    conversationId,
+                    images: response.data.media.images?.length || 0,
+                    documents: response.data.media.documents?.length || 0,
+                    total: response.data.media.total || 0
+                });
+                return {
+                    success: true,
+                    conversationId: response.data.conversationId,
+                    media: response.data.media
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('getConversationMedia error:', {
+                conversationId,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
 }
 
 module.exports = new Helper();
