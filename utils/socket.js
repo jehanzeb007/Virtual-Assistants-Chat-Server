@@ -25,12 +25,19 @@ class Socket {
 
             if (token && userId) {
                 this.userTokens.set(socket.id, token);
-                this.userSockets.set(userId, socket.id);
+
+                // Store multiple sockets per user
+                if (!this.userSockets.has(userId)) {
+                    this.userSockets.set(userId, new Set());
+                }
+                this.userSockets.get(userId).add(socket.id);
+
                 this.socketUsers.set(socket.id, userId);
                 this.socketEnvironments.set(socket.id, environment);
 
                 console.log(`User ${userId} (${userType}) connected`);
                 console.log(`Socket ID: ${socket.id}`);
+                console.log(`Total sessions for user: ${this.userSockets.get(userId).size}`);
                 console.log(`Environment: ${environment.toUpperCase()}`);
                 console.log(`API URL: ${apiUrl}`);
             }
@@ -58,11 +65,14 @@ class Socket {
                     if (result && result.success) {
                         const enrichedChatList = result.chatlist.map(chat => {
                             const lookupId = chat.socket_lookup_id || chat.id || chat.user_id || chat.company_id;
-                            const recipientSocketId = this.userSockets.get(String(lookupId));
+                            const userSocketSet = this.userSockets.get(String(lookupId));
+                            const recipientSocketId = userSocketSet && userSocketSet.size > 0
+                                ? Array.from(userSocketSet)[0]
+                                : null;
 
                             return {
                                 ...chat,
-                                isOnline: !!recipientSocketId,
+                                isOnline: !!(userSocketSet && userSocketSet.size > 0),
                                 socket_id: recipientSocketId
                             };
                         });
@@ -202,7 +212,6 @@ class Socket {
                         );
 
                         this.emitToMultipleSockets(this.io, otherSenderSockets, 'addMessageResponse', response);
-
                         this.emitToMultipleSockets(this.io, uniqueReceiverSockets, 'addMessageResponse', response);
 
                         // Update the temp message ID for the current sender socket
@@ -277,7 +286,10 @@ class Socket {
                 let targetSocketId = data.socket_id;
 
                 if (!targetSocketId && data.toUserId) {
-                    targetSocketId = this.userSockets.get(String(data.toUserId));
+                    const userSocketSet = this.userSockets.get(String(data.toUserId));
+                    if (userSocketSet && userSocketSet.size > 0) {
+                        targetSocketId = Array.from(userSocketSet)[0];
+                    }
                 }
 
                 if (targetSocketId) {
@@ -321,23 +333,17 @@ class Socket {
                     );
 
                     if (result && result.success) {
-                        this.io.to(socket.id).emit('favoriteUpdated', {
-                            success: true,
-                            conversationId: data.conversationId,
-                            isFavorite: data.isFavorite
-                        });
-
-                        const userSockets = Array.from(this.socketUsers.entries())
-                            .filter(([socketId, uId]) => uId === userId && socketId !== socket.id)
-                            .map(([socketId]) => socketId);
-
-                        userSockets.forEach(socketId => {
-                            this.io.to(socketId).emit('favoriteUpdated', {
-                                success: true,
-                                conversationId: data.conversationId,
-                                isFavorite: data.isFavorite
+                        // Get all sockets for this user
+                        const userSocketSet = this.userSockets.get(userId);
+                        if (userSocketSet) {
+                            userSocketSet.forEach(socketId => {
+                                this.io.to(socketId).emit('favoriteUpdated', {
+                                    success: true,
+                                    conversationId: data.conversationId,
+                                    isFavorite: data.isFavorite
+                                });
                             });
-                        });
+                        }
 
                         console.log(`Favorite toggled successfully for conversation ${data.conversationId}`);
                     } else {
@@ -445,14 +451,13 @@ class Socket {
 
                         let recipientSocketId = response.toSocketId;
                         if (!recipientSocketId) {
-                            recipientSocketId = this.userSockets.get(String(response.toUserId));
+                            const userSocketSet = this.userSockets.get(String(response.toUserId));
+                            if (userSocketSet && userSocketSet.size > 0) {
+                                recipientSocketId = Array.from(userSocketSet)[0];
+                            }
                         }
 
-                        const recipientSocket = recipientSocketId ?
-                            this.io.sockets.sockets.get?.(recipientSocketId) ??
-                            this.io.sockets.connected?.[recipientSocketId] : null;
-
-                        if (recipientSocket) {
+                        if (recipientSocketId) {
                             this.io.to(recipientSocketId).emit('addMessageResponse', response);
                         }
 
@@ -470,11 +475,16 @@ class Socket {
              * Get online users
              */
             socket.on('getOnlineUsers', () => {
-                const onlineUsers = Array.from(this.userSockets.entries()).map(([userId, socketId]) => ({
-                    userId,
-                    socketId,
-                    environment: this.socketEnvironments.get(socketId)
-                }));
+                const onlineUsers = [];
+                this.userSockets.forEach((socketSet, userId) => {
+                    socketSet.forEach(socketId => {
+                        onlineUsers.push({
+                            userId,
+                            socketId,
+                            environment: this.socketEnvironments.get(socketId)
+                        });
+                    });
+                });
                 socket.emit('onlineUsersResponse', onlineUsers);
             });
 
@@ -489,21 +499,34 @@ class Socket {
 
                     await helper.logoutUser(socket.id, token, socket);
 
-                    this.userTokens.delete(socket.id);
-                    if (userId) {
-                        this.userSockets.delete(userId);
+                    // Remove this socket from user's socket set
+                    if (userId && this.userSockets.has(userId)) {
+                        const userSocketSet = this.userSockets.get(userId);
+                        userSocketSet.delete(socket.id);
+
+                        // If no more sockets for this user, remove the user entry
+                        if (userSocketSet.size === 0) {
+                            this.userSockets.delete(userId);
+
+                            // Only broadcast user disconnected if ALL sessions are gone
+                            socket.broadcast.emit('chatListRes', {
+                                userDisconnected: true,
+                                socket_id: socket.id,
+                                userId: userId,
+                                environment: environment
+                            });
+
+                            console.log(`User ${userId} fully disconnected (all sessions closed)`);
+                        } else {
+                            console.log(`User ${userId} socket disconnected, ${userSocketSet.size} session(s) remaining`);
+                        }
                     }
+
+                    this.userTokens.delete(socket.id);
                     this.socketUsers.delete(socket.id);
                     this.socketEnvironments.delete(socket.id);
 
-                    socket.broadcast.emit('chatListRes', {
-                        userDisconnected: true,
-                        socket_id: socket.id,
-                        userId: userId,
-                        environment: environment
-                    });
-
-                    console.log(`User ${userId} disconnected [${environment}] (socket: ${socket.id})`);
+                    console.log(`Socket ${socket.id} disconnected [${environment}]`);
                 } catch (error) {
                     console.error('disconnect event error:', error);
                 }
@@ -524,7 +547,6 @@ class Socket {
         } catch (error) {
             console.log(error);
         }
-
     }
 
     async insertMessage(data, socket, token) {
@@ -549,18 +571,6 @@ class Socket {
                 attachments: data.attachments || []
             }, token, socket);
 
-            // console.log('response', sqlResult);
-            // if (sqlResult && sqlResult.insertId) {
-            //     let insertId = sqlResult.insertId;
-            //     this.io.to(socket.id).emit('messageIdUpdate', {
-            //         tempMessageId: data.id,
-            //         insertedId: insertId
-            //     });
-            //     console.log(`Message saved with ID: ${insertId}`, {
-            //         hasAttachments: !!(data.attachments && data.attachments.length > 0)
-            //     });
-            //     return insertId;
-            // }
             return sqlResult;
         } catch (error) {
             console.error('insertMessage error:', error);
