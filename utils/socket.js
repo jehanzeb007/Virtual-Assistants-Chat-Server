@@ -183,29 +183,35 @@ class Socket {
                     const token = this.userTokens.get(socket.id);
 
                     // Insert message with attachments
-                    const insertId = await this.insertMessage(response, socket, token);
+                    const responseInsert = await this.insertMessage(response, socket, token);
 
+                    const insertId = responseInsert?.insertId;
                     if (insertId) {
                         response.id = insertId;
 
-                        let recipientSocketId = response.toSocketId;
+                        const senderSocketIds = responseInsert.responseData.senderSocketIds || [];
+                        const receiverSocketIds = responseInsert.responseData.receiverSocketIds || [];
 
-                        if (!recipientSocketId) {
-                            recipientSocketId = this.userSockets.get(String(response.toUserId));
-                        }
+                        const otherSenderSockets = senderSocketIds.filter(
+                            socketId => socketId !== socket.id
+                        );
 
-                        const recipientSocket = recipientSocketId ?
-                            this.io.sockets.sockets.get?.(recipientSocketId) ??
-                            this.io.sockets.connected?.[recipientSocketId] : null;
+                        const notifiedSocketIds = new Set([...otherSenderSockets, socket.id]);
+                        const uniqueReceiverSockets = receiverSocketIds.filter(
+                            socketId => !notifiedSocketIds.has(socketId)
+                        );
 
-                        if (recipientSocket) {
-                            const recipientEnv = this.socketEnvironments.get(recipientSocketId);
-                            console.log(`Sending to recipient [${recipientEnv}]: ${recipientSocketId}`);
-                            this.io.to(recipientSocketId).emit('addMessageResponse', response);
-                        } else {
-                            console.log(`Recipient ${response.toUserId} is offline`);
-                        }
+                        this.emitToMultipleSockets(this.io, otherSenderSockets, 'addMessageResponse', response);
 
+                        this.emitToMultipleSockets(this.io, uniqueReceiverSockets, 'addMessageResponse', response);
+
+                        // Update the temp message ID for the current sender socket
+                        this.io.to(socket.id).emit('messageIdUpdate', {
+                            tempMessageId: responseInsert.responseData.data.message_id,
+                            insertedId: insertId
+                        });
+
+                        // Confirm message sent successfully to current sender
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
                             id: insertId,
@@ -224,18 +230,14 @@ class Socket {
                                 date: new Date().toISOString()
                             }));
 
-                            // Send to both sender and recipient
-                            this.io.to(socket.id).emit('newMediaUploaded', {
+                            // Combine all unique sockets for media notification (including current)
+                            const allUniqueSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+
+                            // Send to all unique sockets
+                            this.emitToMultipleSockets(this.io, allUniqueSockets, 'newMediaUploaded', {
                                 conversationId: response.conversation_id,
                                 files: mediaFiles
                             });
-
-                            if (recipientSocket) {
-                                this.io.to(recipientSocketId).emit('newMediaUploaded', {
-                                    conversationId: response.conversation_id,
-                                    files: mediaFiles
-                                });
-                            }
 
                             console.log(`New media emitted: ${mediaFiles.length} file(s) for conversation ${response.conversation_id}`);
                         }
@@ -509,6 +511,22 @@ class Socket {
         });
     }
 
+    emitToMultipleSockets(io, socketIds, eventName, data){
+        if (!socketIds || socketIds.length === 0) {
+            console.log('No socket IDs provided.');
+            return;
+        }
+        try {
+            socketIds.forEach(socketId => {
+                console.log(socketId,eventName);
+                io.to(socketId).emit(eventName, data);
+            });
+        } catch (error) {
+            console.log(error);
+        }
+
+    }
+
     async insertMessage(data, socket, token) {
         try {
             console.log(`Inserting message [${socket.environment}] via ${socket.apiUrl}`, {
@@ -531,18 +549,19 @@ class Socket {
                 attachments: data.attachments || []
             }, token, socket);
 
-            if (sqlResult && sqlResult.insertId) {
-                let insertId = sqlResult.insertId;
-                this.io.to(socket.id).emit('messageIdUpdate', {
-                    tempMessageId: data.id,
-                    insertedId: insertId
-                });
-                console.log(`Message saved with ID: ${insertId}`, {
-                    hasAttachments: !!(data.attachments && data.attachments.length > 0)
-                });
-                return insertId;
-            }
-            return null;
+            // console.log('response', sqlResult);
+            // if (sqlResult && sqlResult.insertId) {
+            //     let insertId = sqlResult.insertId;
+            //     this.io.to(socket.id).emit('messageIdUpdate', {
+            //         tempMessageId: data.id,
+            //         insertedId: insertId
+            //     });
+            //     console.log(`Message saved with ID: ${insertId}`, {
+            //         hasAttachments: !!(data.attachments && data.attachments.length > 0)
+            //     });
+            //     return insertId;
+            // }
+            return sqlResult;
         } catch (error) {
             console.error('insertMessage error:', error);
             return null;
