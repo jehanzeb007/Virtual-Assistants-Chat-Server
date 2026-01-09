@@ -57,28 +57,6 @@ class Helper {
     }
 
     /**
-     * Validate file
-     */
-    validateFile(file, filename) {
-        const errors = [];
-
-        // Check file size
-        if (file.length > this.MAX_FILE_SIZE) {
-            errors.push(`File "${filename}" exceeds 2MB limit`);
-        }
-
-        // Check file format
-        const extension = this.getFileExtension(filename).toLowerCase();
-        const allowedTypes = [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES];
-
-        if (!allowedTypes.includes(extension)) {
-            errors.push(`File "${filename}" has unsupported format (.${extension})`);
-        }
-
-        return errors;
-    }
-
-    /**
      * Get file extension
      */
     getFileExtension(filename) {
@@ -266,80 +244,6 @@ class Helper {
     }
 
     /**
-     * Upload file (legacy method for socket.io upload-image event)
-     */
-    async uploadFileViaSocket(fileData, fileName, conversationId, messageId, token = null, socket = null) {
-        try {
-            const client = this.getClient(socket);
-            const apiUrl = this.getApiUrl(socket);
-
-            const headers = token ? {
-                'Authorization': `Bearer ${token}`
-            } : {};
-
-            // Validate file
-            const errors = this.validateFile(fileData, fileName);
-            if (errors.length > 0) {
-                return {
-                    success: false,
-                    errors: errors
-                };
-            }
-
-            // Create form data
-            const FormData = require('form-data');
-            const form = new FormData();
-
-            form.append('file', fileData, fileName);
-            form.append('conversation_id', conversationId);
-            form.append('message_id', messageId);
-
-            console.log(`Uploading file to ${apiUrl}/socket/upload-file`);
-
-            const response = await client.post('/socket/upload-file', form, {
-                headers: {
-                    ...headers,
-                    ...form.getHeaders()
-                }
-            });
-
-            if (response.data && response.data.success) {
-                console.log(`File uploaded successfully [${socket?.environment || 'dev'}]:`, {
-                    filename: fileName,
-                    path: response.data.path
-                });
-
-                return {
-                    success: true,
-                    path: response.data.path,
-                    filename: response.data.filename,
-                    original_name: response.data.original_name,
-                    size: response.data.size,
-                    type: response.data.type,
-                    extension: response.data.extension
-                };
-            }
-
-            return {
-                success: false,
-                message: 'File upload failed'
-            };
-        } catch (error) {
-            console.error('uploadFileViaSocket error:', {
-                fileName,
-                environment: socket?.environment,
-                apiUrl: this.getApiUrl(socket),
-                error: error.response?.data || error.message
-            });
-            return {
-                success: false,
-                message: error.response?.data?.message || 'File upload failed',
-                error: error.message
-            };
-        }
-    }
-
-    /**
      * Mark message as read
      */
     async updateMessagesRead(params, token = null, socket = null) {
@@ -432,39 +336,6 @@ class Helper {
     }
 
     /**
-     * Verify user token and get user details
-     */
-    async verifyToken(token, socket = null) {
-        try {
-            const client = this.getClient(socket);
-            const apiUrl = this.getApiUrl(socket);
-
-            console.log(`Verifying token at ${apiUrl}/user`);
-
-            const response = await client.get('/user', {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.data && response.data.user) {
-                return {
-                    valid: true,
-                    user: response.data.user
-                };
-            }
-            return { valid: false };
-        } catch (error) {
-            console.error('verifyToken error:', {
-                environment: socket?.environment,
-                apiUrl: this.getApiUrl(socket),
-                error: error.response?.data || error.message
-            });
-            return { valid: false };
-        }
-    }
-
-    /**
      * Create directory recursively
      */
     async mkdirSyncRecursive(directory) {
@@ -523,49 +394,6 @@ class Helper {
             });
             return null;
         }
-    }
-
-    /**
-     * Save uploaded file locally
-     */
-    async saveFileLocally(fileData, filename, userId) {
-        try {
-            const uploadDir = path.join(__dirname, '../uploads', userId.toString());
-
-            if (!fs.existsSync(uploadDir)) {
-                await this.mkdirSyncRecursive(uploadDir);
-            }
-
-            const uniqueFilename = `${Date.now()}_${filename}`;
-            const filePath = path.join(uploadDir, uniqueFilename);
-
-            fs.writeFileSync(filePath, fileData);
-
-            return {
-                success: true,
-                path: `/uploads/${userId}/${uniqueFilename}`,
-                filename: uniqueFilename
-            };
-        } catch (error) {
-            console.error('saveFileLocally error:', error);
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
-
-    /**
-     * Get file info
-     */
-    getFileInfo(filename) {
-        const extension = this.getFileExtension(filename);
-        return {
-            extension: extension,
-            isImage: this.isImageFormat(extension),
-            isDocument: this.ALLOWED_DOCUMENT_TYPES.includes(extension),
-            isAllowed: [...this.ALLOWED_IMAGE_TYPES, ...this.ALLOWED_DOCUMENT_TYPES].includes(extension)
-        };
     }
 
     /**
