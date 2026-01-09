@@ -222,12 +222,14 @@ class Helper {
                 to: params.toUserId,
                 conversationId: params.conversation_id,
                 messageId: insertId,
-                hasAttachments: (params.attachments || []).length > 0
+                hasAttachments: (params.attachments || []).length > 0,
+                responseData : response.data,
             });
 
             return {
                 success: true,
-                insertId: insertId
+                insertId: insertId,
+                responseData : response.data,
             };
         } catch (error) {
             console.error('insertMessages error:', {
