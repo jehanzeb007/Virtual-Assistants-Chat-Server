@@ -211,6 +211,34 @@ class Socket {
                             id: insertId,
                             success: true
                         });
+
+                        // Emit new media uploaded event if message has attachments
+                        if (response.attachments && response.attachments.length > 0) {
+                            const mediaFiles = response.attachments.map(file => ({
+                                id: `${insertId}_${file.name}`,
+                                message_id: insertId,
+                                name: file.name,
+                                path: file.path,
+                                size: file.size,
+                                format: file.format,
+                                date: new Date().toISOString()
+                            }));
+
+                            // Send to both sender and recipient
+                            this.io.to(socket.id).emit('newMediaUploaded', {
+                                conversationId: response.conversation_id,
+                                files: mediaFiles
+                            });
+
+                            if (recipientSocket) {
+                                this.io.to(recipientSocketId).emit('newMediaUploaded', {
+                                    conversationId: response.conversation_id,
+                                    files: mediaFiles
+                                });
+                            }
+
+                            console.log(`New media emitted: ${mediaFiles.length} file(s) for conversation ${response.conversation_id}`);
+                        }
                     } else {
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
