@@ -499,34 +499,21 @@ class Socket {
 
                     await helper.logoutUser(socket.id, token, socket);
 
-                    // Remove this socket from user's socket set
-                    if (userId && this.userSockets.has(userId)) {
-                        const userSocketSet = this.userSockets.get(userId);
-                        userSocketSet.delete(socket.id);
-
-                        // If no more sockets for this user, remove the user entry
-                        if (userSocketSet.size === 0) {
-                            this.userSockets.delete(userId);
-
-                            // Only broadcast user disconnected if ALL sessions are gone
-                            socket.broadcast.emit('chatListRes', {
-                                userDisconnected: true,
-                                socket_id: socket.id,
-                                userId: userId,
-                                environment: environment
-                            });
-
-                            console.log(`User ${userId} fully disconnected (all sessions closed)`);
-                        } else {
-                            console.log(`User ${userId} socket disconnected, ${userSocketSet.size} session(s) remaining`);
-                        }
-                    }
-
                     this.userTokens.delete(socket.id);
+                    if (userId) {
+                        this.userSockets.delete(userId);
+                    }
                     this.socketUsers.delete(socket.id);
                     this.socketEnvironments.delete(socket.id);
 
-                    console.log(`Socket ${socket.id} disconnected [${environment}]`);
+                    socket.broadcast.emit('chatListRes', {
+                        userDisconnected: true,
+                        socket_id: socket.id,
+                        userId: userId,
+                        environment: environment
+                    });
+
+                    console.log(`User ${userId} disconnected [${environment}] (socket: ${socket.id})`);
                 } catch (error) {
                     console.error('disconnect event error:', error);
                 }
