@@ -487,6 +487,64 @@ class Socket {
                 socket.emit('onlineUsersResponse', onlineUsers);
             });
 
+
+            socket.on('searchMessages', async (data) => {
+                try {
+                    const token = this.userTokens.get(socket.id);
+
+                    if (!token) {
+                        console.error('No token found for socket:', socket.id);
+                        this.io.to(socket.id).emit('searchMessagesResponse', {
+                            success: false,
+                            message: 'Authentication required',
+                            results: []
+                        });
+                        return;
+                    }
+
+                    console.log(`Searching messages [${socket.environment}]:`, {
+                        conversationId: data.conversation_id,
+                        searchText: data.search_text,
+                        userId: data.user_id
+                    });
+
+                    const result = await helper.searchMessages(
+                        data.conversation_id,
+                        data.search_text,
+                        data.user_id,
+                        token,
+                        socket
+                    );
+
+                    console.log('Search results received',result);
+                    if (result && result.success) {
+                        this.io.to(socket.id).emit('searchMessagesResponse', {
+                            success: true,
+                            results: result.data,
+                            count: result.data.length
+                        });
+
+                        console.log(`Search results sent [${socket.environment}]:`, {
+                            conversationId: data.conversation_id,
+                            resultsCount: result.data.length
+                        });
+                    } else {
+                        this.io.to(socket.id).emit('searchMessagesResponse', {
+                            success: false,
+                            message: 'Search failed',
+                            results: []
+                        });
+                    }
+                } catch (error) {
+                    console.error('searchMessages event error:', error);
+                    this.io.to(socket.id).emit('searchMessagesResponse', {
+                        success: false,
+                        message: 'Internal server error',
+                        results: [],
+                        error: error.message
+                    });
+                }
+            });
             /**
              * Disconnect
              */
