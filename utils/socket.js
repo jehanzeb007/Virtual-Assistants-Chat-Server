@@ -224,7 +224,8 @@ class Socket {
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
                             id: insertId,
-                            success: true
+                            success: true,
+                            conversation_id: response.conversation_id
                         });
 
                         // Emit new media uploaded event if message has attachments
@@ -239,10 +240,8 @@ class Socket {
                                 date: new Date().toISOString()
                             }));
 
-                            // Combine all unique sockets for media notification (including current)
                             const allUniqueSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
 
-                            // Send to all unique sockets
                             this.emitToMultipleSockets(this.io, allUniqueSockets, 'newMediaUploaded', {
                                 conversationId: response.conversation_id,
                                 files: mediaFiles
