@@ -516,17 +516,21 @@ class Socket {
                         socket
                     );
 
-                    console.log('Search results received',result);
                     if (result && result.success) {
+                        // Log pagination info for debugging
+                        if (result.data && result.data.length > 0) {
+                            console.log(`Search results with pagination:`,
+                                result.data.map(r => ({
+                                    id: r.id,
+                                    page: r.pagination_info?.page_number
+                                }))
+                            );
+                        }
+
                         this.io.to(socket.id).emit('searchMessagesResponse', {
                             success: true,
                             results: result.data,
                             count: result.data.length
-                        });
-
-                        console.log(`Search results sent [${socket.environment}]:`, {
-                            conversationId: data.conversation_id,
-                            resultsCount: result.data.length
                         });
                     } else {
                         this.io.to(socket.id).emit('searchMessagesResponse', {
