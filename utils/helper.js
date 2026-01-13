@@ -443,6 +443,55 @@ class Helper {
             return null;
         }
     }
+
+    /**
+     * Search messages in a conversation
+     */
+    async searchMessages(conversationId, searchText, userId, token = null, socket = null) {
+        try {
+            if (!token) {
+                console.error('searchMessages error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const apiUrl = this.getApiUrl(socket);
+
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            console.log(`Searching messages at ${apiUrl}/socket/conversations/${conversationId}/search`);
+
+            const response = await client.post(
+                `/socket/conversations/${conversationId}/search`,
+                {
+                    search_text: searchText,
+                    user_id: userId,
+                    environment: socket?.environment || 'dev'
+                },
+                { headers }
+            );
+
+            if (response.data && response.data.success) {
+                return {
+                    success: true,
+                    data: response.data.results || []
+                };
+            }
+
+            return null;
+        } catch (error) {
+            console.error('searchMessages error:', {
+                conversationId,
+                searchText,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
 }
 
 module.exports = new Helper();
