@@ -21,8 +21,6 @@ class Helper {
         this.ALLOWED_DOCUMENT_TYPES = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
         this.MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB in bytes
         this.DEFAULT_MESSAGE_LIMIT = 20;
-
-        console.log('Helper initialized with API URLs:', this.apiUrls);
     }
 
     /**
@@ -82,8 +80,6 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            console.log(`Connecting user ${userId} to ${apiUrl}/socket/connect`);
-
             const response = await client.post('/socket/connect', {
                 user_id: userId,
                 socket_id: userSocketId,
@@ -91,7 +87,6 @@ class Helper {
                 environment: socket?.environment || 'dev'
             }, { headers });
 
-            console.log(`Socket connected for user ${userId} (${userType}) [${socket?.environment || 'dev'}]`);
             return response.data ? response.data : null;
         } catch (error) {
             console.error('addSocketId error:', {
@@ -117,14 +112,11 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             } : {};
 
-            console.log(`Disconnecting socket ${userSocketId} from ${apiUrl}/socket/disconnect`);
-
             await client.post('/socket/disconnect', {
                 socket_id: userSocketId,
                 environment: socket?.environment || 'dev'
             }, { headers });
 
-            console.log(`User disconnected [${socket?.environment || 'dev'}]:`, userSocketId);
             return true;
         } catch (error) {
             console.error('logoutUser error:', {
@@ -154,15 +146,9 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             };
 
-            console.log(`Fetching chat list from ${apiUrl}/socket/chat-list`);
-
             const response = await client.get('/socket/chat-list', { headers });
 
             if (response.data && response.data.success) {
-                console.log(`Chat list retrieved [${socket?.environment || 'dev'}]:`, {
-                    role: response.data.role,
-                    count: response.data.chatlist?.length || 0
-                });
                 return {
                     success: true,
                     role: response.data.role,
@@ -208,23 +194,9 @@ class Helper {
                 environment: socket?.environment || 'dev'
             };
 
-            console.log(`Inserting message to ${apiUrl}/socket/messages`, {
-                hasAttachments: (params.attachments || []).length > 0,
-                attachmentCount: (params.attachments || []).length
-            });
-
             const response = await client.post('/socket/messages', payload, { headers });
 
             const insertId = response.data.insertId || response.data.data?.id;
-
-            console.log(`Message inserted [${socket?.environment || 'dev'}]:`, {
-                from: params.fromUserId,
-                to: params.toUserId,
-                conversationId: params.conversation_id,
-                messageId: insertId,
-                hasAttachments: (params.attachments || []).length > 0,
-                responseData : response.data,
-            });
 
             return {
                 success: true,
@@ -259,13 +231,10 @@ class Helper {
 
             const messageId = params.id || params.message_id;
 
-            console.log(`Marking message as read in ${apiUrl}/socket/messages/${messageId}/read`);
-
             await client.put(`/socket/messages/${messageId}/read`, {
                 environment: socket?.environment || 'dev'
             }, { headers });
 
-            console.log(`Message marked as read [${socket?.environment || 'dev'}]:`, messageId);
             return true;
         } catch (error) {
             console.error('updateMessagesRead error:', {
@@ -299,23 +268,12 @@ class Helper {
                 params.offset = offset;
             }
 
-            console.log(`Fetching messages from ${apiUrl}/socket/messages/${userId}/${toUserId}`, {
-                limit: params.limit || 'default',
-                offset: params.offset || 0
-            });
-
             const response = await client.get(`/socket/messages/${userId}/${toUserId}`, {
                 headers,
                 params
             });
 
             if (response.data && response.data.success) {
-                console.log(`Messages retrieved [${socket?.environment || 'dev'}]:`, {
-                    userId,
-                    toUserId,
-                    count: response.data.data?.length || 0,
-                    pagination: response.data.pagination
-                });
                 return {
                     success: true,
                     data: response.data.data || [],
@@ -365,8 +323,6 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             };
 
-            console.log(`Toggling favorite at ${apiUrl}/socket/conversations/${conversationId}/toggle-favorite`);
-
             const response = await client.post(
                 `/socket/conversations/${conversationId}/toggle-favorite`,
                 {
@@ -377,10 +333,6 @@ class Helper {
             );
 
             if (response.data && response.data.success) {
-                console.log(`Favorite toggled [${socket?.environment || 'dev'}]:`, {
-                    conversationId,
-                    isFavorite: response.data.is_favorite
-                });
                 return {
                     success: true,
                     is_favorite: response.data.is_favorite
@@ -415,17 +367,9 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             };
 
-            console.log(`Fetching conversation media from ${apiUrl}/socket/conversations/${conversationId}/media`);
-
             const response = await client.get(`/socket/conversations/${conversationId}/media`, { headers });
 
             if (response.data && response.data.success) {
-                console.log(`Conversation media retrieved [${socket?.environment || 'dev'}]:`, {
-                    conversationId,
-                    images: response.data.media.images?.length || 0,
-                    documents: response.data.media.documents?.length || 0,
-                    total: response.data.media.total || 0
-                });
                 return {
                     success: true,
                     conversationId: response.data.conversationId,
@@ -460,8 +404,6 @@ class Helper {
             const headers = {
                 'Authorization': `Bearer ${token}`
             };
-
-            console.log(`Searching messages at ${apiUrl}/socket/conversations/${conversationId}/search`);
 
             const response = await client.post(
                 `/socket/conversations/${conversationId}/search`,

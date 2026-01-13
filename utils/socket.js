@@ -34,12 +34,6 @@ class Socket {
 
                 this.socketUsers.set(socket.id, userId);
                 this.socketEnvironments.set(socket.id, environment);
-
-                console.log(`User ${userId} (${userType}) connected`);
-                console.log(`Socket ID: ${socket.id}`);
-                console.log(`Total sessions for user: ${this.userSockets.get(userId).size}`);
-                console.log(`Environment: ${environment.toUpperCase()}`);
-                console.log(`API URL: ${apiUrl}`);
             }
 
             /**
@@ -59,7 +53,6 @@ class Socket {
                         return;
                     }
 
-                    console.log(`Fetching chat list for user [${socket.environment}]`);
                     const result = await helper.getChatList(token, socket);
 
                     if (result && result.success) {
@@ -118,11 +111,6 @@ class Socket {
                     const limit = data.limit || null;
                     const offset = data.offset || null;
 
-                    console.log(`Getting messages [${socket.environment}]: ${data.fromUserId} → ${data.toUserId}`, {
-                        limit: limit || 'default (20)',
-                        offset: offset || 0
-                    });
-
                     const result = await helper.getMessages(
                         data.fromUserId,
                         data.toUserId,
@@ -149,11 +137,6 @@ class Socket {
                             toUserId: data.toUserId,
                             pagination: result.pagination
                         });
-
-                        console.log(`Messages sent to client:`, {
-                            count: result.data.length,
-                            pagination: result.pagination
-                        });
                     }
                 } catch (error) {
                     console.error('getMessages event error:', error);
@@ -176,17 +159,6 @@ class Socket {
              */
             socket.on('sendMessage', async (response) => {
                 try {
-                    const env = socket.environment || 'dev';
-
-                    console.log(`Message received [${env.toUpperCase()}]:`, {
-                        from: response.fromUserId,
-                        to: response.toUserId,
-                        conversationId: response.conversation_id,
-                        hasAttachments: !!(response.attachments && response.attachments.length > 0),
-                        attachmentCount: response.attachments?.length || 0,
-                        apiUrl: socket.apiUrl
-                    });
-
                     response.date = moment().format("YYYY-MM-DD");
                     response.time = moment().format("hh:mm A");
 
@@ -214,13 +186,11 @@ class Socket {
                         this.emitToMultipleSockets(this.io, otherSenderSockets, 'addMessageResponse', response);
                         this.emitToMultipleSockets(this.io, uniqueReceiverSockets, 'addMessageResponse', response);
 
-                        // Update the temp message ID for the current sender socket
                         this.io.to(socket.id).emit('messageIdUpdate', {
                             tempMessageId: responseInsert.responseData.data.message_id,
                             insertedId: insertId
                         });
 
-                        // Confirm message sent successfully to current sender
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
                             id: insertId,
@@ -246,8 +216,30 @@ class Socket {
                                 conversationId: response.conversation_id,
                                 files: mediaFiles
                             });
+                        }
+                        if (response.message) {
+                            const urls = this.extractUrlsFromText(response.message);
 
-                            console.log(`New media emitted: ${mediaFiles.length} file(s) for conversation ${response.conversation_id}`);
+                            if (urls.length > 0) {
+                                const links = urls.map(url => {
+                                    const domain = this.getDomainFromUrl(url);
+                                    return {
+                                        id: `${insertId}_${require('crypto').createHash('md5').update(url).digest('hex')}`,
+                                        message_id: insertId,
+                                        url: url,
+                                        title: domain || 'Link',
+                                        domain: domain,
+                                        date: new Date().toISOString()
+                                    };
+                                });
+
+                                const allUniqueSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+
+                                this.emitToMultipleSockets(this.io, allUniqueSockets, 'newLinksShared', {
+                                    conversationId: response.conversation_id,
+                                    links: links
+                                });
+                            }
                         }
                     } else {
                         this.io.to(socket.id).emit('messageSent', {
@@ -318,12 +310,6 @@ class Socket {
                         return;
                     }
 
-                    console.log(`Toggling favorite [${socket.environment}]:`, {
-                        userId,
-                        conversationId: data.conversationId,
-                        isFavorite: data.isFavorite
-                    });
-
                     const result = await helper.toggleFavorite(
                         data.conversationId,
                         data.isFavorite,
@@ -344,7 +330,6 @@ class Socket {
                             });
                         }
 
-                        console.log(`Favorite toggled successfully for conversation ${data.conversationId}`);
                     } else {
                         this.io.to(socket.id).emit('favoriteUpdated', {
                             success: false,
@@ -381,10 +366,6 @@ class Socket {
                         return;
                     }
 
-                    console.log(`Fetching conversation media [${socket.environment}]:`, {
-                        conversationId: data.conversationId
-                    });
-
                     const result = await helper.getConversationMedia(
                         data.conversationId,
                         token,
@@ -398,11 +379,6 @@ class Socket {
                             media: result.media
                         });
 
-                        console.log(`Conversation media sent [${socket.environment}]:`, {
-                            conversationId: result.conversationId,
-                            imagesCount: result.media.images?.length || 0,
-                            documentsCount: result.media.documents?.length || 0
-                        });
                     } else {
                         this.io.to(socket.id).emit('conversationMediaResponse', {
                             success: false,
@@ -412,7 +388,6 @@ class Socket {
                         });
                     }
                 } catch (error) {
-                    console.error('getConversationMedia event error:', error);
                     this.io.to(socket.id).emit('conversationMediaResponse', {
                         success: false,
                         message: 'Failed to fetch conversation media',
@@ -463,7 +438,6 @@ class Socket {
                         socket.emit('image-uploaded', response);
                     });
                 } catch (error) {
-                    console.error('upload-image event error:', error);
                     socket.emit('image-upload-error', {
                         error: 'Failed to upload image'
                     });
@@ -493,7 +467,6 @@ class Socket {
                     const token = this.userTokens.get(socket.id);
 
                     if (!token) {
-                        console.error('No token found for socket:', socket.id);
                         this.io.to(socket.id).emit('searchMessagesResponse', {
                             success: false,
                             message: 'Authentication required',
@@ -501,12 +474,6 @@ class Socket {
                         });
                         return;
                     }
-
-                    console.log(`Searching messages [${socket.environment}]:`, {
-                        conversationId: data.conversation_id,
-                        searchText: data.search_text,
-                        userId: data.user_id
-                    });
 
                     const result = await helper.searchMessages(
                         data.conversation_id,
@@ -517,16 +484,6 @@ class Socket {
                     );
 
                     if (result && result.success) {
-                        // Log pagination info for debugging
-                        if (result.data && result.data.length > 0) {
-                            console.log(`Search results with pagination:`,
-                                result.data.map(r => ({
-                                    id: r.id,
-                                    page: r.pagination_info?.page_number
-                                }))
-                            );
-                        }
-
                         this.io.to(socket.id).emit('searchMessagesResponse', {
                             success: true,
                             results: result.data,
@@ -540,7 +497,6 @@ class Socket {
                         });
                     }
                 } catch (error) {
-                    console.error('searchMessages event error:', error);
                     this.io.to(socket.id).emit('searchMessagesResponse', {
                         success: false,
                         message: 'Internal server error',
@@ -574,7 +530,6 @@ class Socket {
                         environment: environment
                     });
 
-                    console.log(`User ${userId} disconnected [${environment}] (socket: ${socket.id})`);
                 } catch (error) {
                     console.error('disconnect event error:', error);
                 }
@@ -584,12 +539,10 @@ class Socket {
 
     emitToMultipleSockets(io, socketIds, eventName, data){
         if (!socketIds || socketIds.length === 0) {
-            console.log('No socket IDs provided.');
             return;
         }
         try {
             socketIds.forEach(socketId => {
-                console.log(socketId,eventName);
                 io.to(socketId).emit(eventName, data);
             });
         } catch (error) {
@@ -597,13 +550,46 @@ class Socket {
         }
     }
 
+    extractUrlsFromText(text) {
+        if (!text) return [];
+
+        const urls = [];
+
+        const patternWithProtocol = /\b(https?:\/\/[^\s<>"']+)/gi;
+        const matchesWithProtocol = text.match(patternWithProtocol);
+
+        if (matchesWithProtocol) {
+            matchesWithProtocol.forEach(url => {
+                const cleanUrl = url.replace(/[.,;:!?]+$/, '');
+                urls.push(cleanUrl);
+            });
+        }
+
+        const patternWithoutProtocol = /(?<![\/\w])((?:www\.)[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+(?:\/[^\s<>"']*)?)/gi;
+        const matchesWithoutProtocol = text.match(patternWithoutProtocol);
+
+        if (matchesWithoutProtocol) {
+            matchesWithoutProtocol.forEach(url => {
+                const cleanUrl = url.replace(/[.,;:!?]+$/, '');
+                urls.push('https://' + cleanUrl);
+            });
+        }
+
+        return [...new Set(urls)];
+    }
+
+    getDomainFromUrl(url) {
+        try {
+            const parsedUrl = new URL(url);
+            const host = parsedUrl.hostname;
+            return host.replace(/^www\./, '');
+        } catch (error) {
+            return '';
+        }
+    }
+
     async insertMessage(data, socket, token) {
         try {
-            console.log(`Inserting message [${socket.environment}] via ${socket.apiUrl}`, {
-                hasAttachments: !!(data.attachments && data.attachments.length > 0),
-                attachmentCount: data.attachments?.length || 0
-            });
-
             const sqlResult = await helper.insertMessages({
                 message_id: data.id,
                 type: data.type || 'text',
@@ -646,14 +632,7 @@ class Socket {
                 let userType = socket.handshake.query['user_type'] || 'user';
                 let environment = socket.environment || 'dev';
 
-                console.log(`Socket authentication [${environment.toUpperCase()}]:`, {
-                    userId,
-                    userType,
-                    apiUrl: socket.apiUrl
-                });
-
                 if (!userId || !token) {
-                    console.error('Missing userId or token');
                     return next(new Error('Authentication error'));
                 }
 
@@ -661,10 +640,8 @@ class Socket {
                 const response = await helper.addSocketId(userId, userSocketId, userType, token, socket);
 
                 if (response && response !== null) {
-                    console.log(`Socket authenticated [${environment.toUpperCase()}]: ${userId} (${userType})`);
                     next();
                 } else {
-                    console.error(`Socket authentication failed [${environment.toUpperCase()}]: ${userId}`);
                     next(new Error('Authentication failed'));
                 }
             } catch (error) {
