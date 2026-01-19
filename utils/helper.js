@@ -87,7 +87,11 @@ class Helper {
                 environment: socket?.environment || 'dev'
             }, { headers });
 
-            return response.data ? response.data : null;
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
+                return response.data.data;
+            }
+            return null;
         } catch (error) {
             console.error('addSocketId error:', {
                 userId,
@@ -148,11 +152,12 @@ class Helper {
 
             const response = await client.get('/socket/chat-list', { headers });
 
-            if (response.data && response.data.success) {
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
                 return {
                     success: true,
-                    role: response.data.role,
-                    chatlist: response.data.chatlist || []
+                    role: response.data.data.role,
+                    chatlist: response.data.data.chatlist || []
                 };
             }
             return null;
@@ -196,13 +201,17 @@ class Helper {
 
             const response = await client.post('/socket/messages', payload, { headers });
 
-            const insertId = response.data.insertId || response.data.data?.id;
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
+                const insertId = response.data.data.insertId || response.data.data.data?.id;
 
-            return {
-                success: true,
-                insertId: insertId,
-                responseData : response.data,
-            };
+                return {
+                    success: true,
+                    insertId: insertId,
+                    responseData: response.data.data,
+                };
+            }
+            return null;
         } catch (error) {
             console.error('insertMessages error:', {
                 environment: socket?.environment,
@@ -231,11 +240,12 @@ class Helper {
 
             const messageId = params.id || params.message_id;
 
-            await client.put(`/socket/messages/${messageId}/read`, {
+            const response = await client.put(`/socket/messages/${messageId}/read`, {
                 environment: socket?.environment || 'dev'
             }, { headers });
 
-            return true;
+            // Check new response format: status === 'success'
+            return response.data && response.data.status === 'success';
         } catch (error) {
             console.error('updateMessagesRead error:', {
                 environment: socket?.environment,
@@ -273,11 +283,12 @@ class Helper {
                 params
             });
 
-            if (response.data && response.data.success) {
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
                 return {
                     success: true,
-                    data: response.data.data || [],
-                    pagination: response.data.pagination
+                    data: response.data.data.data || [],
+                    pagination: response.data.data.pagination
                 };
             }
             return null;
@@ -332,10 +343,11 @@ class Helper {
                 { headers }
             );
 
-            if (response.data && response.data.success) {
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
                 return {
                     success: true,
-                    is_favorite: response.data.is_favorite
+                    is_favorite: response.data.data.is_favorite
                 };
             }
             return null;
@@ -369,11 +381,12 @@ class Helper {
 
             const response = await client.get(`/socket/conversations/${conversationId}/media`, { headers });
 
-            if (response.data && response.data.success) {
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
                 return {
                     success: true,
-                    conversationId: response.data.conversationId,
-                    media: response.data.media
+                    conversationId: response.data.data.conversationId,
+                    media: response.data.data.media
                 };
             }
             return null;
@@ -415,10 +428,11 @@ class Helper {
                 { headers }
             );
 
-            if (response.data && response.data.success) {
+            // Check new response format: status === 'success'
+            if (response.data && response.data.status === 'success') {
                 return {
                     success: true,
-                    data: response.data.results || []
+                    data: response.data.data.results || []
                 };
             }
 
