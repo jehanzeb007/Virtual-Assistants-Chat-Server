@@ -227,6 +227,88 @@ class Helper {
     }
 
     /**
+     * Edit a message
+     */
+    async editMessage(messageId, newContent, token = null, socket = null) {
+        try {
+            if (!token) {
+                console.error('editMessage error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            const response = await client.put(`/socket/messages/${messageId}/edit`, {
+                message: newContent,
+                environment: socket?.environment || 'dev'
+            }, { headers });
+
+            if (response.data && response.data.status === 'success') {
+                return {
+                    success: true,
+                    responseData: response.data.data
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('editMessage error:', {
+                messageId,
+                environment: socket?.environment,
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Create a reply to a message
+     */
+    async createReply(params, socket, token = null) {
+        try {
+            const client = this.getClient(socket);
+            const headers = token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+
+            const payload = {
+                message_id: params.message_id,
+                type: params.type || 'text',
+                sender_id: params.fromUserId,
+                sender_type: params.senderType || 'App\\Models\\User',
+                conversation_id: params.conversation_id || null,
+                message: params.message,
+                reply_to_message_id: params.reply_to_message_id,
+                date: params.date,
+                time: params.time,
+                ip: params.ip || null,
+                attachments: params.attachments || [],
+                environment: socket?.environment || 'dev'
+            };
+
+            const response = await client.post('/socket/messages/reply', payload, { headers });
+
+            if (response.data && response.data.status === 'success') {
+                const insertId = response.data.data.insertId || response.data.data.data?.id;
+
+                return {
+                    success: true,
+                    insertId: insertId,
+                    responseData: response.data.data,
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('createReply error:', {
+                environment: socket?.environment,
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
+    /**
      * Mark message as read
      */
     async updateMessagesRead(params, token = null, socket = null) {

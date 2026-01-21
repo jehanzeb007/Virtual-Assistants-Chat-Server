@@ -461,6 +461,115 @@ class Socket {
                 socket.emit('onlineUsersResponse', onlineUsers);
             });
 
+            /**
+             * Edit Message
+             */
+            socket.on('editMessage', async (data) => {
+                try {
+                    const token = this.userTokens.get(socket.id);
+
+                    const result = await helper.editMessage(
+                        data.messageId,
+                        data.message,
+                        token,
+                        socket
+                    );
+
+                    if (result && result.success) {
+                        const senderSocketIds = result.responseData.senderSocketIds || [];
+                        const receiverSocketIds = result.responseData.receiverSocketIds || [];
+
+                        const editedMessage = {
+                            id: data.messageId,
+                            message: data.message,
+                            is_edited: true,
+                            edited_at: new Date().toISOString(),
+                            conversation_id: data.conversation_id
+                        };
+
+                        // Notify all connected sockets (sender and receiver)
+                        const allSocketIds = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+                        this.emitToMultipleSockets(this.io, allSocketIds, 'messageEdited', editedMessage);
+
+                        // Confirm to sender
+                        this.io.to(socket.id).emit('editMessageResponse', {
+                            success: true,
+                            messageId: data.messageId
+                        });
+                    } else {
+                        this.io.to(socket.id).emit('editMessageResponse', {
+                            success: false,
+                            error: 'Failed to edit message'
+                        });
+                    }
+                } catch (error) {
+                    console.error('editMessage event error:', error);
+                    this.io.to(socket.id).emit('editMessageResponse', {
+                        success: false,
+                        error: 'Failed to edit message'
+                    });
+                }
+            });
+
+            /**
+             * Create Reply
+             */
+            socket.on('createReply', async (response) => {
+                try {
+                    response.date = moment().format("YYYY-MM-DD");
+                    response.time = moment().format("hh:mm A");
+
+                    const token = this.userTokens.get(socket.id);
+
+                    const responseInsert = await helper.createReply(response, socket, token);
+                    const insertId = responseInsert?.insertId;
+
+                    if (insertId) {
+                        response.id = insertId;
+
+                        // ADD: Include reply_snapshot from the response
+                        if (responseInsert.responseData?.data) {
+                            response.reply_snapshot = responseInsert.responseData.data.reply_snapshot;
+                            response.reply_to_message_id = responseInsert.responseData.data.reply_to_message_id;
+                        }
+
+                        const senderSocketIds = responseInsert.responseData.senderSocketIds || [];
+                        const receiverSocketIds = responseInsert.responseData.receiverSocketIds || [];
+
+                        const otherSenderSockets = senderSocketIds.filter(
+                            socketId => socketId !== socket.id
+                        );
+
+                        const notifiedSocketIds = new Set([...otherSenderSockets, socket.id]);
+                        const uniqueReceiverSockets = receiverSocketIds.filter(
+                            socketId => !notifiedSocketIds.has(socketId)
+                        );
+
+                        this.emitToMultipleSockets(this.io, otherSenderSockets, 'addMessageResponse', response);
+                        this.emitToMultipleSockets(this.io, uniqueReceiverSockets, 'addMessageResponse', response);
+
+                        this.io.to(socket.id).emit('messageSent', {
+                            tempId: response.tempId || response.id,
+                            id: insertId,
+                            success: true,
+                            conversation_id: response.conversation_id
+                        });
+                    } else {
+                        this.io.to(socket.id).emit('messageSent', {
+                            tempId: response.tempId || response.id,
+                            success: false,
+                            error: 'Failed to create reply'
+                        });
+                    }
+                } catch (error) {
+                    console.error('createReply event error:', error);
+                    this.io.to(socket.id).emit('messageSent', {
+                        tempId: response.tempId || response.id,
+                        success: false,
+                        error: 'Failed to create reply'
+                    });
+                }
+            });
 
             socket.on('searchMessages', async (data) => {
                 try {
