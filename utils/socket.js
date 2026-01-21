@@ -471,6 +471,7 @@ class Socket {
                     const result = await helper.editMessage(
                         data.messageId,
                         data.message,
+                        data.attachments || [],
                         token,
                         socket
                     );
@@ -484,17 +485,36 @@ class Socket {
                             message: data.message,
                             is_edited: true,
                             edited_at: new Date().toISOString(),
-                            conversation_id: data.conversation_id
+                            conversation_id: data.conversation_id,
+                            attachments: result.responseData.message?.attachments || data.attachments // ADD: Include attachments
                         };
 
                         // Notify all connected sockets (sender and receiver)
                         const allSocketIds = [...new Set([...senderSocketIds, ...receiverSocketIds])];
                         this.emitToMultipleSockets(this.io, allSocketIds, 'messageEdited', editedMessage);
 
+                        if (data.attachments && data.attachments.length > 0) {
+                            const mediaFiles = data.attachments.map(file => ({
+                                id: `${data.messageId}_${file.name}`,
+                                message_id: data.messageId,
+                                name: file.name,
+                                path: file.path,
+                                size: file.size,
+                                format: file.format,
+                                date: new Date().toISOString()
+                            }));
+
+                            this.emitToMultipleSockets(this.io, allSocketIds, 'newMediaUploaded', {
+                                conversationId: data.conversation_id,
+                                files: mediaFiles
+                            });
+                        }
+
                         // Confirm to sender
                         this.io.to(socket.id).emit('editMessageResponse', {
                             success: true,
-                            messageId: data.messageId
+                            messageId: data.messageId,
+                            attachments: editedMessage.attachments
                         });
                     } else {
                         this.io.to(socket.id).emit('editMessageResponse', {
