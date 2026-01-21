@@ -229,7 +229,7 @@ class Helper {
     /**
      * Edit a message
      */
-    async editMessage(messageId, newContent, token = null, socket = null) {
+    async editMessage(messageId, newContent, attachments = [], token = null, socket = null) {
         try {
             if (!token) {
                 console.error('editMessage error: Token is required');
@@ -241,10 +241,17 @@ class Helper {
                 'Authorization': `Bearer ${token}`
             };
 
-            const response = await client.put(`/socket/messages/${messageId}/edit`, {
+            const payload = {
                 message: newContent,
                 environment: socket?.environment || 'dev'
-            }, { headers });
+            };
+
+            // ADD: Include attachments if provided
+            if (attachments && attachments.length > 0) {
+                payload.attachments = attachments;
+            }
+
+            const response = await client.put(`/socket/messages/${messageId}/edit`, payload, { headers });
 
             if (response.data && response.data.status === 'success') {
                 return {
@@ -257,6 +264,7 @@ class Helper {
             console.error('editMessage error:', {
                 messageId,
                 environment: socket?.environment,
+                attachmentsCount: attachments?.length || 0,
                 error: error.response?.data || error.message
             });
             return null;
