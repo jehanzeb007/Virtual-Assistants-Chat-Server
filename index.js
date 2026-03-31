@@ -6,6 +6,7 @@ const https = require('https');
 const fs = require('fs');
 const socketio = require('socket.io');
 const socketEvents = require('./utils/socket');
+require('dotenv').config();
 
 class Server {
     constructor() {
@@ -16,8 +17,10 @@ class Server {
         // API URLs for different environments
         this.apiUrls = {
             dev: process.env.DEV_API_URL || 'https://dev.virtualassistants.help/api',
+            devLocal: process.env.DEV_LOCAL_API_URL || process.env.LOCAL_API_URL || '',
             stage: process.env.STAGE_API_URL || 'https://stage.virtualassistants.help/api',
-            production: process.env.PRODUCTION_API_URL || 'https://virtualassistants.help/api'
+            production: process.env.PRODUCTION_API_URL || 'https://virtualassistants.help/api',
+            productionMarket: process.env.PRODUCTION_API_URL_MARKET || 'https://virtualassistant.market/api'
         };
 
         this.app = express();
@@ -99,12 +102,51 @@ class Server {
 
         // Check production (must be after dev/stage checks)
         if (origin.includes('virtualassistants.help') ||
-            host.includes('virtualassistants.help')) {
+            host.includes('virtualassistants.help') ||
+            origin.includes('virtualassistant.market') ||
+            host.includes('virtualassistant.market')) {
             return 'production';
         }
 
         // Default to dev for local development
         return 'dev';
+    }
+
+    /**
+     * Select production API URL based on client domain
+     */
+    getProductionApiUrl(socket) {
+        const origin = socket.handshake.headers.origin ||
+            socket.handshake.headers.referer ||
+            '';
+        const host = socket.handshake.headers.host || '';
+
+        if (origin.includes('virtualassistant.market') || host.includes('virtualassistant.market')) {
+            return this.apiUrls.productionMarket;
+        }
+
+        return this.apiUrls.production;
+    }
+
+    /**
+     * Select dev API URL based on client domain
+     */
+    getDevApiUrl(socket) {
+        const origin = socket.handshake.headers.origin ||
+            socket.handshake.headers.referer ||
+            '';
+        const host = socket.handshake.headers.host || '';
+
+        const isLocalDev = origin.includes('localhost') ||
+            origin.includes('127.0.0.1') ||
+            host.includes('localhost') ||
+            host.includes('127.0.0.1');
+
+        if (isLocalDev && this.apiUrls.devLocal) {
+            return this.apiUrls.devLocal;
+        }
+
+        return this.apiUrls.dev;
     }
 
     /**
@@ -115,13 +157,16 @@ class Server {
         this.io = socketio(this.server, {
             cors: {
                 origin: [
+                    'http://localhost',
+                    'http://127.0.0.1',
                     'http://localhost:8080',
                     'http://localhost:3000',
                     'http://127.0.0.1:8080',
                     'http://127.0.0.1:3000',
                     'https://dev.virtualassistants.help',
                     'https://stage.virtualassistants.help',
-                    'https://virtualassistants.help'
+                    'https://virtualassistants.help',
+                    'https://virtualassistant.market'
                 ],
                 methods: ['GET', 'POST'],
                 credentials: true,
@@ -135,7 +180,11 @@ class Server {
         this.io.use((socket, next) => {
             // Detect environment
             const environment = this.detectEnvironment(socket);
-            const apiUrl = this.apiUrls[environment];
+            const apiUrl = environment === 'production'
+                ? this.getProductionApiUrl(socket)
+                : environment === 'dev'
+                    ? this.getDevApiUrl(socket)
+                    : this.apiUrls[environment];
 
             // Store in socket instance
             socket.environment = environment;
@@ -221,15 +270,18 @@ class Server {
             console.log(`Server running on ${protocol}://${displayHost}:${this.port}`);
             console.log('═══════════════════════════════════════════════════════');
             console.log('Supported Environments:');
-            console.log(`   • DEV        → ${this.apiUrls.dev}`);
+            console.log(`   • DEV (default)      → ${this.apiUrls.dev}`);
+            console.log(`   • DEV (localhost)    → ${this.apiUrls.devLocal || this.apiUrls.dev}`);
             console.log(`   • STAGE      → ${this.apiUrls.stage}`);
-            console.log(`   • PRODUCTION → ${this.apiUrls.production}`);
+            console.log(`   • PRODUCTION (.help)   → ${this.apiUrls.production}`);
+            console.log(`   • PRODUCTION (.market) → ${this.apiUrls.productionMarket}`);
             console.log('═══════════════════════════════════════════════════════');
             console.log('Environment Detection:');
             console.log('   • localhost:* → DEV');
             console.log('   • dev.virtualassistants.help → DEV');
             console.log('   • stage.virtualassistants.help → STAGE');
             console.log('   • virtualassistants.help → PRODUCTION');
+            console.log('   • virtualassistant.market → PRODUCTION');
             console.log('═══════════════════════════════════════════════════════');
         });
 
