@@ -26,6 +26,7 @@ class Server {
         this.app = express();
         this.server = null;
         this.io = null;
+        this.socketHandler = null;
 
         // Track connections by environment
         this.environmentStats = {
@@ -65,11 +66,37 @@ class Server {
         // Static file serving
         this.app.use('/uploads', express.static(__dirname + '/uploads'));
         this.app.use(express.json());
+
+        // ─── Laravel pushes messages to this endpoint ───────────────────────
+        this.app.post('/emit-message', (req, res) => {
+            try {
+                const payload    = req.body;
+                const toUserId   = String(payload.toUserId);
+                const fromUserId = String(payload.fromUserId);
+                const event      = payload.event || 'addMessageResponse';
+
+                console.log(`/emit-message → event: ${event}, from: ${fromUserId}, to: ${toUserId}`);
+
+                const receiverSockets = this.socketHandler?.userSockets?.get(toUserId);
+                const senderSockets   = this.socketHandler?.userSockets?.get(fromUserId);
+
+                [receiverSockets, senderSockets].forEach(socketSet => {
+                    if (socketSet && socketSet.size > 0) {
+                        socketSet.forEach(socketId => {
+                            this.io.to(socketId).emit(event, payload);
+                        });
+                    }
+                });
+
+                res.json({ success: true });
+            } catch (error) {
+                console.error('/emit-message error:', error);
+                res.status(500).json({ success: false, error: error.message });
+            }
+        });
+        // ────────────────────────────────────────────────────────────────────
     }
 
-    /**
-     * Detect environment from connection origin
-     */
     detectEnvironment(socket) {
         const origin = socket.handshake.headers.origin ||
             socket.handshake.headers.referer ||
@@ -231,8 +258,10 @@ class Server {
             });
         });
 
-        // Initialize socket events with apiUrls reference
-        new socketEvents(this.io, this.apiUrls).socketConfig();
+        // ─── Store handler reference so /emit-message can access userSockets ─
+        this.socketHandler = new socketEvents(this.io, this.apiUrls);
+        this.socketHandler.socketConfig();
+        // ─────────────────────────────────────────────────────────────────────
     }
 
     /**
@@ -270,18 +299,11 @@ class Server {
             console.log(`Server running on ${protocol}://${displayHost}:${this.port}`);
             console.log('═══════════════════════════════════════════════════════');
             console.log('Supported Environments:');
-            console.log(`   • DEV (default)      → ${this.apiUrls.dev}`);
-            console.log(`   • DEV (localhost)    → ${this.apiUrls.devLocal || this.apiUrls.dev}`);
-            console.log(`   • STAGE      → ${this.apiUrls.stage}`);
-            console.log(`   • PRODUCTION (.help)   → ${this.apiUrls.production}`);
-            console.log(`   • PRODUCTION (.market) → ${this.apiUrls.productionMarket}`);
-            console.log('═══════════════════════════════════════════════════════');
-            console.log('Environment Detection:');
-            console.log('   • localhost:* → DEV');
-            console.log('   • dev.virtualassistants.help → DEV');
-            console.log('   • stage.virtualassistants.help → STAGE');
-            console.log('   • virtualassistants.help → PRODUCTION');
-            console.log('   • virtualassistant.market → PRODUCTION');
+            console.log(`   • DEV             → ${this.apiUrls.dev}`);
+            console.log(`   • DEV (localhost) → ${this.apiUrls.devLocal || this.apiUrls.dev}`);
+            console.log(`   • STAGE           → ${this.apiUrls.stage}`);
+            console.log(`   • PRODUCTION      → ${this.apiUrls.production}`);
+            console.log(`   • PRODUCTION MKT  → ${this.apiUrls.productionMarket}`);
             console.log('═══════════════════════════════════════════════════════');
         });
 
