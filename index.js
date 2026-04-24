@@ -75,19 +75,28 @@ class Server {
                 const fromUserId = String(payload.fromUserId);
                 const event      = payload.event || 'addMessageResponse';
 
-                console.log(`/emit-message → event: ${event}, from: ${fromUserId}, to: ${toUserId}`);
+                console.log('═══════ /emit-message received ═══════');
+                console.log('Event:', event);
+                console.log('From:', fromUserId, '→ To:', toUserId);
+                console.log('Conversation ID:', payload.conversation_id);
+                console.log('Connected users:', [...(this.socketHandler?.userSockets?.keys() || [])]);
 
                 const receiverSockets = this.socketHandler?.userSockets?.get(toUserId);
                 const senderSockets   = this.socketHandler?.userSockets?.get(fromUserId);
+
+                console.log('Receiver sockets found:', receiverSockets ? [...receiverSockets] : 'NONE');
+                console.log('Sender sockets found:', senderSockets ? [...senderSockets] : 'NONE');
 
                 [receiverSockets, senderSockets].forEach(socketSet => {
                     if (socketSet && socketSet.size > 0) {
                         socketSet.forEach(socketId => {
                             this.io.to(socketId).emit(event, payload);
+                            console.log('Emitted to socket:', socketId);
                         });
                     }
                 });
 
+                console.log('═══════════════════════════════════════');
                 res.json({ success: true });
             } catch (error) {
                 console.error('/emit-message error:', error);
