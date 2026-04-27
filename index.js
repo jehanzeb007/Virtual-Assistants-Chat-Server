@@ -14,7 +14,6 @@ class Server {
         this.host = process.env.HOST || '127.0.0.1';
         this.port = process.env.PORT || 3001;
 
-        // API URLs for different environments
         this.apiUrls = {
             dev: process.env.DEV_API_URL || 'https://dev.virtualassistants.help/api',
             devLocal: process.env.DEV_LOCAL_API_URL || process.env.LOCAL_API_URL || '',
@@ -28,14 +27,12 @@ class Server {
         this.io = null;
         this.socketHandler = null;
 
-        // Track connections by environment
         this.environmentStats = {
             dev: { connections: 0, users: new Set() },
             stage: { connections: 0, users: new Set() },
             production: { connections: 0, users: new Set() }
         };
 
-        // SSL options for HTTPS
         this.sslOptions = this.loadSSLCertificates();
     }
 
@@ -71,33 +68,122 @@ class Server {
         this.app.post('/emit-message', (req, res) => {
             try {
                 const payload    = req.body;
-                const toUserId   = String(payload.toUserId);
-                const fromUserId = String(payload.fromUserId);
+                const toUserId   = String(payload.toUserId   ?? '');
+                const fromUserId = String(payload.fromUserId ?? '');
                 const event      = payload.event || 'addMessageResponse';
 
                 console.log('═══════ /emit-message received ═══════');
                 console.log('Event:', event);
                 console.log('From:', fromUserId, '→ To:', toUserId);
                 console.log('Conversation ID:', payload.conversation_id);
-                console.log('Connected users:', [...(this.socketHandler?.userSockets?.keys() || [])]);
 
-                const receiverSockets = this.socketHandler?.userSockets?.get(toUserId);
-                const senderSockets   = this.socketHandler?.userSockets?.get(fromUserId);
+                // Guard: socketHandler must be ready
+                if (!this.socketHandler || !this.socketHandler.userSockets) {
+                    console.error('/emit-message: socketHandler.userSockets not available');
+                    return res.status(500).json({ success: false, error: 'Socket handler not ready' });
+                }
 
-                console.log('Receiver sockets found:', receiverSockets ? [...receiverSockets] : 'NONE');
-                console.log('Sender sockets found:', senderSockets ? [...senderSockets] : 'NONE');
+                const userSockets = this.socketHandler.userSockets;
+                console.log('Connected users:', [...userSockets.keys()]);
 
-                [receiverSockets, senderSockets].forEach(socketSet => {
-                    if (socketSet && socketSet.size > 0) {
-                        socketSet.forEach(socketId => {
-                            this.io.to(socketId).emit(event, payload);
-                            console.log('Emitted to socket:', socketId);
+                // ── Resolve socket ID sets ─────────────────────────────────
+                // Mirrors senderSocketIds / receiverSocketIds from sendMessage event
+                const senderSocketSet   = userSockets.get(fromUserId);
+                const receiverSocketSet = userSockets.get(toUserId);
+
+                const senderSocketIds   = senderSocketSet   ? [...senderSocketSet]   : [];
+                const receiverSocketIds = receiverSocketSet ? [...receiverSocketSet] : [];
+
+                console.log('Sender sockets found:',   senderSocketIds.length   ? senderSocketIds   : 'NONE');
+                console.log('Receiver sockets found:',  receiverSocketIds.length ? receiverSocketIds : 'NONE');
+
+                // ── Deduplicate — same logic as sendMessage ────────────────
+                // No originating socket.id to exclude so all sender sockets
+                // are treated as "otherSenderSockets"
+                const notifiedSocketIds     = new Set([...senderSocketIds]);
+                const uniqueReceiverSockets = receiverSocketIds.filter(
+                    socketId => !notifiedSocketIds.has(socketId)
+                );
+
+                // ── Emit addMessageResponse to sender sockets ──────────────
+                if (senderSocketIds.length > 0) {
+                    senderSocketIds.forEach(socketId => {
+                        this.io.to(socketId).emit(event, payload);
+                        console.log('Emitted to sender socket:', socketId);
+                    });
+                } else {
+                    console.warn('No sender sockets found for userId:', fromUserId);
+                }
+
+                // ── Emit addMessageResponse to unique receiver sockets ─────
+                if (uniqueReceiverSockets.length > 0) {
+                    uniqueReceiverSockets.forEach(socketId => {
+                        this.io.to(socketId).emit(event, payload);
+                        console.log('Emitted to receiver socket:', socketId);
+                    });
+                } else {
+                    console.warn('No receiver sockets found for userId:', toUserId);
+                }
+
+                // ── Shared socket list for broadcast side-events ───────────
+                const allUniqueSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+
+                // ── Emit newMediaUploaded if payload has attachments ───────
+                if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
+                    const mediaFiles = payload.attachments.map(file => ({
+                        id: `${payload.id}_${file.name}`,
+                        message_id: payload.id,
+                        name: file.name,
+                        path: file.path,
+                        size: file.size,
+                        format: file.format,
+                        date: new Date().toISOString()
+                    }));
+
+                    allUniqueSockets.forEach(socketId => {
+                        this.io.to(socketId).emit('newMediaUploaded', {
+                            conversationId: payload.conversation_id,
+                            files: mediaFiles
                         });
-                    }
-                });
+                    });
 
+                    console.log('Emitted newMediaUploaded to', allUniqueSockets.length, 'sockets');
+                }
+
+                // ── Emit newLinksShared if message contains URLs ───────────
+                if (payload.message) {
+                    const urls = this.extractUrlsFromText(payload.message);
+
+                    if (urls.length > 0) {
+                        const crypto = require('crypto');
+                        const links = urls.map(url => {
+                            const domain = this.getDomainFromUrl(url);
+                            return {
+                                id: `${payload.id}_${crypto.createHash('md5').update(url).digest('hex')}`,
+                                message_id: payload.id,
+                                url: url,
+                                title: domain || 'Link',
+                                domain: domain,
+                                date: new Date().toISOString()
+                            };
+                        });
+
+                        allUniqueSockets.forEach(socketId => {
+                            this.io.to(socketId).emit('newLinksShared', {
+                                conversationId: payload.conversation_id,
+                                links: links
+                            });
+                        });
+
+                        console.log('Emitted newLinksShared to', allUniqueSockets.length, 'sockets');
+                    }
+                }
+
+                const totalNotified = new Set([...senderSocketIds, ...uniqueReceiverSockets]).size;
+                console.log('Total unique sockets notified:', totalNotified);
                 console.log('═══════════════════════════════════════');
-                res.json({ success: true });
+
+                res.json({ success: true, notified: totalNotified });
             } catch (error) {
                 console.error('/emit-message error:', error);
                 res.status(500).json({ success: false, error: error.message });
@@ -106,37 +192,65 @@ class Server {
         // ────────────────────────────────────────────────────────────────────
     }
 
+    // ── URL helpers — kept in sync with socket.js ─────────────────────────
+    extractUrlsFromText(text) {
+        if (!text) return [];
+
+        const urls = [];
+
+        const patternWithProtocol = /\b(https?:\/\/[^\s<>"']+)/gi;
+        const matchesWithProtocol = text.match(patternWithProtocol);
+        if (matchesWithProtocol) {
+            matchesWithProtocol.forEach(url => {
+                urls.push(url.replace(/[.,;:!?]+$/, ''));
+            });
+        }
+
+        const patternWithoutProtocol = /(?<![\/\w])((?:www\.)[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+(?:\/[^\s<>"']*)?)/gi;
+        const matchesWithoutProtocol = text.match(patternWithoutProtocol);
+        if (matchesWithoutProtocol) {
+            matchesWithoutProtocol.forEach(url => {
+                urls.push('https://' + url.replace(/[.,;:!?]+$/, ''));
+            });
+        }
+
+        return [...new Set(urls)];
+    }
+
+    getDomainFromUrl(url) {
+        try {
+            return new URL(url).hostname.replace(/^www\./, '');
+        } catch {
+            return '';
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     detectEnvironment(socket) {
         const origin = socket.handshake.headers.origin ||
             socket.handshake.headers.referer ||
             '';
-
         const host = socket.handshake.headers.host || '';
 
-        // Check query parameter first (highest priority)
         if (socket.handshake.query.environment) {
             return socket.handshake.query.environment;
         }
 
-        // Check localhost/127.0.0.1 (development)
         if (origin.includes('localhost') || origin.includes('127.0.0.1') ||
             host.includes('localhost') || host.includes('127.0.0.1')) {
             return 'dev';
         }
 
-        // Check dev subdomain
         if (origin.includes('dev.virtualassistants.help') ||
             host.includes('dev.virtualassistants.help')) {
             return 'dev';
         }
 
-        // Check stage subdomain
         if (origin.includes('stage.virtualassistants.help') ||
             host.includes('stage.virtualassistants.help')) {
             return 'stage';
         }
 
-        // Check production (must be after dev/stage checks)
         if (origin.includes('virtualassistants.help') ||
             host.includes('virtualassistants.help') ||
             origin.includes('virtualassistant.market') ||
@@ -144,7 +258,6 @@ class Server {
             return 'production';
         }
 
-        // Default to dev for local development
         return 'dev';
     }
 
@@ -189,7 +302,6 @@ class Server {
      * Setup Socket.IO with environment awareness
      */
     setupSocketIO() {
-        // Configure Socket.IO with CORS for all environments
         this.io = socketio(this.server, {
             cors: {
                 origin: [
@@ -212,9 +324,7 @@ class Server {
             allowEIO3: true
         });
 
-        // Middleware to detect environment from connection
         this.io.use((socket, next) => {
-            // Detect environment
             const environment = this.detectEnvironment(socket);
             const apiUrl = environment === 'production'
                 ? this.getProductionApiUrl(socket)
@@ -222,7 +332,6 @@ class Server {
                     ? this.getDevApiUrl(socket)
                     : this.apiUrls[environment];
 
-            // Store in socket instance
             socket.environment = environment;
             socket.apiUrl = apiUrl;
 
@@ -241,12 +350,10 @@ class Server {
             next();
         });
 
-        // Track connections by environment
         this.io.on('connection', (socket) => {
             const env = socket.environment || 'production';
             const userId = socket.handshake.query.id;
 
-            // Update stats
             this.environmentStats[env].connections++;
             if (userId) {
                 this.environmentStats[env].users.add(userId);
@@ -256,7 +363,6 @@ class Server {
             console.log(`Current ${env} connections: ${this.environmentStats[env].connections}`);
             console.log(`API URL: ${socket.apiUrl}`);
 
-            // Handle disconnect
             socket.on('disconnect', () => {
                 this.environmentStats[env].connections--;
                 if (userId) {
@@ -267,10 +373,9 @@ class Server {
             });
         });
 
-        // ─── Store handler reference so /emit-message can access userSockets ─
+        // Store handler reference so /emit-message can access userSockets
         this.socketHandler = new socketEvents(this.io, this.apiUrls);
         this.socketHandler.socketConfig();
-        // ─────────────────────────────────────────────────────────────────────
     }
 
     /**
@@ -284,10 +389,8 @@ class Server {
         console.log(`   Port: ${this.port}`);
         console.log(`   Host: ${this.host}`);
 
-        // Setup Express
         this.setupExpress();
 
-        // Create server (HTTPS if certificates available, otherwise HTTP)
         if (this.sslOptions) {
             this.server = https.createServer(this.sslOptions, this.app);
             console.log('Protocol: HTTPS');
@@ -296,10 +399,8 @@ class Server {
             console.log('Protocol: HTTP');
         }
 
-        // Setup Socket.IO
         this.setupSocketIO();
 
-        // Start listening
         this.server.listen(this.port, this.host, () => {
             const protocol = this.sslOptions ? 'https' : 'http';
             const displayHost = this.host === '0.0.0.0' ? 'localhost' : this.host;
@@ -316,7 +417,6 @@ class Server {
             console.log('═══════════════════════════════════════════════════════');
         });
 
-        // Error handling
         this.server.on('error', (error) => {
             console.error('Server error:', error.message);
             if (error.code === 'EADDRINUSE') {
@@ -325,7 +425,6 @@ class Server {
             }
         });
 
-        // Graceful shutdown
         this.setupGracefulShutdown();
     }
 
@@ -336,20 +435,17 @@ class Server {
         const shutdown = async (signal) => {
             console.log(`\n ${signal} received. Shutting down gracefully...`);
 
-            // Close socket connections
             if (this.io) {
                 console.log('   Closing socket connections...');
                 this.io.close();
             }
 
-            // Close HTTP/HTTPS server
             if (this.server) {
                 this.server.close(() => {
                     console.log(' Server shut down gracefully');
                     process.exit(0);
                 });
 
-                // Force close after 10 seconds
                 setTimeout(() => {
                     console.error('  Forcing shutdown after timeout');
                     process.exit(1);
