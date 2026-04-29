@@ -88,8 +88,18 @@ class Server {
 
                 // ── Resolve socket ID sets ─────────────────────────────────
                 // Mirrors senderSocketIds / receiverSocketIds from sendMessage event
-                const senderSocketSet   = userSockets.get(fromUserId);
-                const receiverSocketSet = userSockets.get(toUserId);
+                const normalizeRoleFromModelType = (modelType, fallback = 'user') => {
+                    if (!modelType || typeof modelType !== 'string') return fallback;
+                    if (modelType.includes('Company')) return 'company_admin';
+                    return 'user';
+                };
+                const getSocketKey = (userId, userType = 'user') => `${String(userId)}:${String(userType || 'user')}`;
+
+                const senderRole = normalizeRoleFromModelType(payload.sender_type, 'user');
+                const receiverRole = normalizeRoleFromModelType(payload.receiver_type, 'user');
+
+                const senderSocketSet = userSockets.get(getSocketKey(fromUserId, senderRole));
+                const receiverSocketSet = userSockets.get(getSocketKey(toUserId, receiverRole));
 
                 const senderSocketIds   = senderSocketSet   ? [...senderSocketSet]   : [];
                 const receiverSocketIds = receiverSocketSet ? [...receiverSocketSet] : [];
