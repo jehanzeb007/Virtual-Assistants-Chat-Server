@@ -134,9 +134,9 @@ class Helper {
     }
 
     /**
-     * Get chat list for authenticated user based on their role
+     * Get Chat List
      */
-    async getChatList(token, socket = null) {
+    async getChatList(token, socket = null, role = null) {
         try {
             if (!token) {
                 console.error('getChatList error: Token is required');
@@ -144,13 +144,16 @@ class Helper {
             }
 
             const client = this.getClient(socket);
-            const apiUrl = this.getApiUrl(socket);
-
             const headers = {
                 'Authorization': `Bearer ${token}`
             };
 
-            const response = await client.get('/socket/chat-list', { headers });
+            const params = {};
+            if (role) {
+                params.role = role;
+            }
+
+            const response = await client.get('/socket/chat-list', { headers, params });
 
             // Check new response format: status === 'success'
             if (response.data && response.data.status === 'success') {
@@ -531,6 +534,45 @@ class Helper {
             console.error('searchMessages error:', {
                 conversationId,
                 searchText,
+                environment: socket?.environment,
+                apiUrl: this.getApiUrl(socket),
+                error: error.response?.data || error.message
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Get unread count for the other profile
+     */
+    async getOtherProfileUnreadCount(token, socket = null, role = null) {
+        try {
+            if (!token) {
+                console.error('getOtherProfileUnreadCount error: Token is required');
+                return null;
+            }
+
+            const client = this.getClient(socket);
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            const params = {};
+            if (role) {
+                params.role = role;
+            }
+
+            const response = await client.get('/socket/other-profile-unread-count', { headers, params });
+
+            if (response.data && response.data.status === 'success') {
+                return {
+                    success: true,
+                    ...response.data.data
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('getOtherProfileUnreadCount error:', {
                 environment: socket?.environment,
                 apiUrl: this.getApiUrl(socket),
                 error: error.response?.data || error.message

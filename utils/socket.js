@@ -13,6 +13,7 @@ class Socket {
         this.userSockets = new Map();
         this.socketUsers = new Map();
         this.socketEnvironments = new Map();
+        this.socketRoles = new Map();
     }
 
     socketEvents() {
@@ -34,6 +35,7 @@ class Socket {
 
                 this.socketUsers.set(socket.id, userId);
                 this.socketEnvironments.set(socket.id, environment);
+                this.socketRoles.set(socket.id, userType);
             }
 
             /**
@@ -53,7 +55,8 @@ class Socket {
                         return;
                     }
 
-                    const result = await helper.getChatList(token, socket);
+                    const role = this.socketRoles.get(socket.id);
+                    const result = await helper.getChatList(token, socket, role);
 
                     if (result && result.success) {
                         const enrichedChatList = result.chatlist.map(chat => {
@@ -241,6 +244,9 @@ class Socket {
                                 });
                             }
                         }
+
+                        // Emit updated other profile unread count to both parties
+                        await this.broadcastOtherProfileUnreadCount([response.fromUserId, response.toUserId]);
                     } else {
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
@@ -265,6 +271,14 @@ class Socket {
                 try {
                     const token = this.userTokens.get(socket.id);
                     await this.updateMessageRead(data, socket, token);
+
+                    // Also broadcast unread count updates as messages were marked read
+                    const userId = this.socketUsers.get(socket.id);
+                    if (userId) {
+                        // We might need the other party's ID too, but usually read status only affects the reader's "other profile" count
+                        // However, to be safe and consistent, we can broadcast to the reader
+                        await this.broadcastOtherProfileUnreadCount([userId]);
+                    }
                 } catch (error) {
                     console.error('messageRead event error:', error);
                 }
@@ -574,6 +588,9 @@ class Socket {
                             success: true,
                             conversation_id: response.conversation_id
                         });
+
+                        // Emit updated other profile unread count to both parties
+                        await this.broadcastOtherProfileUnreadCount([response.fromUserId, response.toUserId]);
                     } else {
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
@@ -634,6 +651,24 @@ class Socket {
                     });
                 }
             });
+
+            /**
+             * Get unread count for the other profile
+             */
+            socket.on('getOtherProfileUnreadCount', async () => {
+                try {
+                    const token = this.userTokens.get(socket.id);
+                    if (!token) return;
+
+                    const role = this.socketRoles.get(socket.id);
+                    const result = await helper.getOtherProfileUnreadCount(token, socket, role);
+                    if (result && result.success) {
+                        this.io.to(socket.id).emit('otherProfileUnreadCount', result);
+                    }
+                } catch (error) {
+                    console.error('getOtherProfileUnreadCount event error:', error);
+                }
+            });
             /**
              * Disconnect
              */
@@ -651,6 +686,7 @@ class Socket {
                     }
                     this.socketUsers.delete(socket.id);
                     this.socketEnvironments.delete(socket.id);
+                    this.socketRoles.delete(socket.id);
 
                     socket.broadcast.emit('chatListRes', {
                         userDisconnected: true,
@@ -676,6 +712,33 @@ class Socket {
             });
         } catch (error) {
             console.log(error);
+        }
+    }
+
+    async broadcastOtherProfileUnreadCount(userIds) {
+        if (!userIds || !Array.isArray(userIds)) return;
+        
+        // Get unique user IDs to avoid redundant processing
+        const uniqueUserIds = [...new Set(userIds.map(String))];
+        
+        for (const userId of uniqueUserIds) {
+            const partySockets = this.userSockets.get(userId);
+            if (partySockets) {
+                for (const partySocketId of partySockets) {
+                    const partyToken = this.userTokens.get(partySocketId);
+                    if (partyToken) {
+                        const partyRole = this.socketRoles.get(partySocketId);
+                        const unreadResult = await helper.getOtherProfileUnreadCount(
+                            partyToken,
+                            { id: partySocketId, environment: this.socketEnvironments.get(partySocketId) },
+                            partyRole
+                        );
+                        if (unreadResult && unreadResult.success) {
+                            this.io.to(partySocketId).emit('otherProfileUnreadCount', unreadResult);
+                        }
+                    }
+                }
+            }
         }
     }
 
