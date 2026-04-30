@@ -222,6 +222,10 @@ class Socket {
                             conversation_id: response.conversation_id
                         });
 
+                        // Emit updated other profile unread count to all affected sockets
+                        const allAffectedSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+                        await this.broadcastOtherProfileUnreadCount(allAffectedSockets);
+
                         // Emit new media uploaded event if message has attachments
                         if (response.attachments && response.attachments.length > 0) {
                             const mediaFiles = response.attachments.map(file => ({
@@ -293,12 +297,15 @@ class Socket {
                     const token = this.userTokens.get(socket.id);
                     await this.updateMessageRead(data, socket, token);
 
-                    // Also broadcast unread count updates as messages were marked read
+                    // Broadcast unread count updates for all sockets of the user who read the message
                     const userId = this.socketUsers.get(socket.id);
+                    const userType = this.socketUserTypes.get(socket.id);
                     if (userId) {
-                        // We might need the other party's ID too, but usually read status only affects the reader's "other profile" count
-                        // However, to be safe and consistent, we can broadcast to the reader
-                        await this.broadcastOtherProfileUnreadCount([userId]);
+                        const userSocketKey = this.getUserSocketKey(userId, userType || 'user');
+                        const userSockets = this.userSockets.get(userSocketKey);
+                        if (userSockets) {
+                            await this.broadcastOtherProfileUnreadCount([...userSockets]);
+                        }
                     }
                 } catch (error) {
                     console.error('messageRead event error:', error);
@@ -619,8 +626,9 @@ class Socket {
                             conversation_id: response.conversation_id
                         });
 
-                        // Emit updated other profile unread count to both parties
-                        await this.broadcastOtherProfileUnreadCount([response.fromUserId, response.toUserId]);
+                        // Emit updated other profile unread count to all affected sockets
+                        const allAffectedSockets = [...new Set([...senderSocketIds, ...receiverSocketIds])];
+                        await this.broadcastOtherProfileUnreadCount(allAffectedSockets);
                     } else {
                         this.io.to(socket.id).emit('messageSent', {
                             tempId: response.tempId || response.id,
@@ -755,28 +763,23 @@ class Socket {
         }
     }
 
-    async broadcastOtherProfileUnreadCount(userIds) {
-        if (!userIds || !Array.isArray(userIds)) return;
+    async broadcastOtherProfileUnreadCount(socketIds) {
+        if (!socketIds || !Array.isArray(socketIds)) return;
         
-        // Get unique user IDs to avoid redundant processing
-        const uniqueUserIds = [...new Set(userIds.map(String))];
+        // Use a Set to ensure we only process each socket once
+        const uniqueSocketIds = [...new Set(socketIds.map(String))];
         
-        for (const userId of uniqueUserIds) {
-            const partySockets = this.userSockets.get(userId);
-            if (partySockets) {
-                for (const partySocketId of partySockets) {
-                    const partyToken = this.userTokens.get(partySocketId);
-                    if (partyToken) {
-                        const partyRole = this.socketRoles.get(partySocketId);
-                        const unreadResult = await helper.getOtherProfileUnreadCount(
-                            partyToken,
-                            { id: partySocketId, environment: this.socketEnvironments.get(partySocketId) },
-                            partyRole
-                        );
-                        if (unreadResult && unreadResult.success) {
-                            this.io.to(partySocketId).emit('otherProfileUnreadCount', unreadResult);
-                        }
-                    }
+        for (const partySocketId of uniqueSocketIds) {
+            const partyToken = this.userTokens.get(partySocketId);
+            if (partyToken) {
+                const partyRole = this.socketRoles.get(partySocketId);
+                const unreadResult = await helper.getOtherProfileUnreadCount(
+                    partyToken,
+                    { id: partySocketId, environment: this.socketEnvironments.get(partySocketId) },
+                    partyRole
+                );
+                if (unreadResult && unreadResult.success) {
+                    this.io.to(partySocketId).emit('otherProfileUnreadCount', unreadResult);
                 }
             }
         }
