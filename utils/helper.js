@@ -43,13 +43,15 @@ class Helper {
      */
     getClient(socket) {
         const apiUrl = this.getApiUrl(socket);
+        const requestedUserType = socket?.handshake?.query?.user_type || 'user';
 
         return axios.create({
             baseURL: apiUrl,
             timeout: 30000,
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-User-Type': requestedUserType
             }
         });
     }

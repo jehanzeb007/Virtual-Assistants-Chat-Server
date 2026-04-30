@@ -12,8 +12,25 @@ class Socket {
         this.userTokens = new Map();
         this.userSockets = new Map();
         this.socketUsers = new Map();
+        this.socketUserTypes = new Map();
         this.socketEnvironments = new Map();
         this.socketRoles = new Map();
+    }
+
+    getUserSocketKey(userId, userType = 'user') {
+        return `${String(userId)}:${String(userType || 'user')}`;
+    }
+
+    normalizeRoleFromModelType(modelType, fallbackRole = 'user') {
+        if (!modelType || typeof modelType !== 'string') {
+            return fallbackRole;
+        }
+
+        if (modelType.includes('Company')) {
+            return 'company_admin';
+        }
+
+        return 'user';
     }
 
     socketEvents() {
@@ -28,12 +45,14 @@ class Socket {
                 this.userTokens.set(socket.id, token);
 
                 // Store multiple sockets per user
-                if (!this.userSockets.has(userId)) {
-                    this.userSockets.set(userId, new Set());
+                const userSocketKey = this.getUserSocketKey(userId, userType);
+                if (!this.userSockets.has(userSocketKey)) {
+                    this.userSockets.set(userSocketKey, new Set());
                 }
-                this.userSockets.get(userId).add(socket.id);
+                this.userSockets.get(userSocketKey).add(socket.id);
 
                 this.socketUsers.set(socket.id, userId);
+                this.socketUserTypes.set(socket.id, userType);
                 this.socketEnvironments.set(socket.id, environment);
                 this.socketRoles.set(socket.id, userType);
             }
@@ -61,7 +80,8 @@ class Socket {
                     if (result && result.success) {
                         const enrichedChatList = result.chatlist.map(chat => {
                             const lookupId = chat.socket_lookup_id || chat.id || chat.user_id || chat.company_id;
-                            const userSocketSet = this.userSockets.get(String(lookupId));
+                            const expectedRole = chat.type === 'company' ? 'company_admin' : 'user';
+                            const userSocketSet = this.userSockets.get(this.getUserSocketKey(lookupId, expectedRole));
                             const recipientSocketId = userSocketSet && userSocketSet.size > 0
                                 ? Array.from(userSocketSet)[0]
                                 : null;
@@ -83,6 +103,7 @@ class Socket {
                         socket.broadcast.emit('chatListRes', {
                             userConnected: true,
                             userId: userId,
+                            userType: userType,
                             socket_id: socket.id,
                             environment: socket.environment
                         });
@@ -291,7 +312,9 @@ class Socket {
                 let targetSocketId = data.socket_id;
 
                 if (!targetSocketId && data.toUserId) {
-                    const userSocketSet = this.userSockets.get(String(data.toUserId));
+                    const toUserType = data.toUserType || data.receiverUserType || data.receiver_type || data.receiverType;
+                    const normalizedToUserType = this.normalizeRoleFromModelType(toUserType, 'user');
+                    const userSocketSet = this.userSockets.get(this.getUserSocketKey(data.toUserId, normalizedToUserType));
                     if (userSocketSet && userSocketSet.size > 0) {
                         targetSocketId = Array.from(userSocketSet)[0];
                     }
@@ -333,7 +356,8 @@ class Socket {
 
                     if (result && result.success) {
                         // Get all sockets for this user
-                        const userSocketSet = this.userSockets.get(userId);
+                        const currentUserType = this.socketUserTypes.get(socket.id) || 'user';
+                        const userSocketSet = this.userSockets.get(this.getUserSocketKey(userId, currentUserType));
                         if (userSocketSet) {
                             userSocketSet.forEach(socketId => {
                                 this.io.to(socketId).emit('favoriteUpdated', {
@@ -439,7 +463,11 @@ class Socket {
 
                         let recipientSocketId = response.toSocketId;
                         if (!recipientSocketId) {
-                            const userSocketSet = this.userSockets.get(String(response.toUserId));
+                            const receiverUserType = response.receiverUserType || response.receiver_type || response.receiverType;
+                            const normalizedReceiverType = this.normalizeRoleFromModelType(receiverUserType, 'user');
+                            const userSocketSet = this.userSockets.get(
+                                this.getUserSocketKey(response.toUserId, normalizedReceiverType)
+                            );
                             if (userSocketSet && userSocketSet.size > 0) {
                                 recipientSocketId = Array.from(userSocketSet)[0];
                             }
@@ -463,10 +491,12 @@ class Socket {
              */
             socket.on('getOnlineUsers', () => {
                 const onlineUsers = [];
-                this.userSockets.forEach((socketSet, userId) => {
+                this.userSockets.forEach((socketSet, userKey) => {
                     socketSet.forEach(socketId => {
+                        const [mappedUserId, mappedUserType] = String(userKey).split(':');
                         onlineUsers.push({
-                            userId,
+                            userId: mappedUserId,
+                            userType: mappedUserType || 'user',
                             socketId,
                             environment: this.socketEnvironments.get(socketId)
                         });
@@ -676,15 +706,24 @@ class Socket {
                 try {
                     const token = this.userTokens.get(socket.id);
                     const userId = this.socketUsers.get(socket.id);
+                    const userType = this.socketUserTypes.get(socket.id);
                     const environment = this.socketEnvironments.get(socket.id);
 
                     await helper.logoutUser(socket.id, token, socket);
 
                     this.userTokens.delete(socket.id);
                     if (userId) {
-                        this.userSockets.delete(userId);
+                        const userSocketKey = this.getUserSocketKey(userId, userType || 'user');
+                        const userSocketSet = this.userSockets.get(userSocketKey);
+                        if (userSocketSet) {
+                            userSocketSet.delete(socket.id);
+                            if (userSocketSet.size === 0) {
+                                this.userSockets.delete(userSocketKey);
+                            }
+                        }
                     }
                     this.socketUsers.delete(socket.id);
+                    this.socketUserTypes.delete(socket.id);
                     this.socketEnvironments.delete(socket.id);
                     this.socketRoles.delete(socket.id);
 
@@ -692,6 +731,7 @@ class Socket {
                         userDisconnected: true,
                         socket_id: socket.id,
                         userId: userId,
+                        userType: userType,
                         environment: environment
                     });
 
