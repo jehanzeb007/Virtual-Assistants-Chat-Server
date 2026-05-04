@@ -201,6 +201,7 @@ class Helper {
                 time: params.time,
                 ip: params.ip || null,
                 attachments: params.attachments || [],
+                broadcast: false,
                 environment: socket?.environment || 'dev'
             };
 
